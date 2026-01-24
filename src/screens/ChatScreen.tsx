@@ -16,8 +16,10 @@ import {
 } from 'react-native';
 import { colors, spacing, fontSize, borderRadius } from '../theme/whatsapp';
 import { conversasApi, Mensagem, SugestaoResposta, OpcaoArquetipo } from '../services/api';
+import { useWebSocket } from '../hooks/useWebSocket';
 
 const INPUT_ACCESSORY_ID = 'chatInputAccessory';
+const PAGE_SIZE = 50;
 
 interface Props {
   route: any;
@@ -28,6 +30,7 @@ export default function ChatScreen({ route, navigation }: Props) {
   const { jid, nome } = route.params;
   const [mensagens, setMensagens] = useState<Mensagem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [texto, setTexto] = useState('');
   const [enviando, setEnviando] = useState(false);
   const [sugerindo, setSugerindo] = useState(false);
@@ -38,7 +41,9 @@ export default function ChatScreen({ route, navigation }: Props) {
 
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
-  const lastMessageIdRef = useRef<string | null>(null);
+  const [offset, setOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
+  const [isNearBottom, setIsNearBottom] = useState(true);
 
   useEffect(() => {
     navigation.setOptions({
@@ -68,38 +73,97 @@ export default function ChatScreen({ route, navigation }: Props) {
     };
   }, []);
 
+  const scrollToBottom = useCallback((animated = true) => {
+    flatListRef.current?.scrollToEnd({ animated });
+  }, []);
+
+  const atualizarHasMore = useCallback((nextOffset: number, nextTotal: number) => {
+    setHasMore(nextOffset < nextTotal);
+  }, []);
+
   const carregarMensagens = useCallback(async (silent = false) => {
     try {
-      const data = await conversasApi.mensagens(jid);
-
-      // Verifica se tem mensagens novas
-      if (data.mensagens.length > 0) {
-        const ultimaMsg = data.mensagens[data.mensagens.length - 1];
-        if (lastMessageIdRef.current !== ultimaMsg.message_id) {
-          lastMessageIdRef.current = ultimaMsg.message_id;
-          setMensagens(data.mensagens);
-          if (!silent) {
-            setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
-          }
-        }
-      } else {
-        setMensagens(data.mensagens);
+      const data = await conversasApi.mensagens(jid, PAGE_SIZE, 0);
+      setMensagens(data.mensagens);
+      setOffset(data.mensagens.length);
+      atualizarHasMore(data.mensagens.length, data.total);
+      if (!silent) {
+        setTimeout(() => scrollToBottom(false), 0);
       }
     } catch (error) {
       console.error('Erro ao carregar mensagens:', error);
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [jid]);
+  }, [jid, atualizarHasMore, scrollToBottom]);
 
-  // Carrega inicial + polling para auto-refresh
+  const carregarMaisMensagens = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const data = await conversasApi.mensagens(jid, PAGE_SIZE, offset);
+      setMensagens((prev) => {
+        const existentes = new Set(prev.map((m) => m.message_id));
+        const maisAntigas = data.mensagens.filter((m) => !existentes.has(m.message_id));
+        return [...maisAntigas, ...prev];
+      });
+      const nextOffset = offset + data.mensagens.length;
+      setOffset(nextOffset);
+      atualizarHasMore(nextOffset, data.total);
+    } catch (error) {
+      console.error('Erro ao carregar mensagens antigas:', error);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [hasMore, jid, loadingMore, offset, atualizarHasMore]);
+
+  const sincronizarUltimasMensagens = useCallback(async () => {
+    try {
+      const data = await conversasApi.mensagens(jid, PAGE_SIZE, 0);
+      setMensagens((prev) => {
+        const porId = new Map(prev.map((m) => [m.message_id, m]));
+        data.mensagens.forEach((m) => porId.set(m.message_id, m));
+        const merged = Array.from(porId.values());
+        merged.sort((a, b) => {
+          const aTime = a.data_hora ? new Date(a.data_hora).getTime() : 0;
+          const bTime = b.data_hora ? new Date(b.data_hora).getTime() : 0;
+          return aTime - bTime;
+        });
+        return merged;
+      });
+      atualizarHasMore(offset, data.total);
+      if (isNearBottom) {
+        setTimeout(() => scrollToBottom(true), 0);
+      }
+    } catch (error) {
+      console.error('Erro ao sincronizar mensagens:', error);
+    }
+  }, [jid, isNearBottom, offset, atualizarHasMore, scrollToBottom]);
+
+  const { isConnected, watchConversation, unwatchConversation } = useWebSocket({
+    onNewMessage: useCallback((mensagemJid: string, mensagem: any) => {
+      if (mensagemJid !== jid) return;
+      setMensagens((prev) => {
+        if (prev.some((m) => m.message_id === mensagem.message_id)) {
+          return prev;
+        }
+        const merged = [...prev, mensagem];
+        merged.sort((a, b) => {
+          const aTime = a.data_hora ? new Date(a.data_hora).getTime() : 0;
+          const bTime = b.data_hora ? new Date(b.data_hora).getTime() : 0;
+          return aTime - bTime;
+        });
+        return merged;
+      });
+      if (isNearBottom) {
+        setTimeout(() => scrollToBottom(true), 0);
+      }
+    }, [jid, isNearBottom, scrollToBottom]),
+  });
+
+  // Carrega inicial + fallback polling quando WebSocket está offline
   useEffect(() => {
     carregarMensagens();
-
-    // Polling a cada 5 segundos para novas mensagens
-    pollingRef.current = setInterval(() => {
-      carregarMensagens(true);
-    }, 5000);
 
     return () => {
       if (pollingRef.current) {
@@ -107,6 +171,31 @@ export default function ChatScreen({ route, navigation }: Props) {
       }
     };
   }, [carregarMensagens]);
+
+  useEffect(() => {
+    if (!isConnected && !pollingRef.current) {
+      pollingRef.current = setInterval(() => {
+        sincronizarUltimasMensagens();
+      }, 10000);
+    }
+    if (isConnected && pollingRef.current) {
+      clearInterval(pollingRef.current);
+      pollingRef.current = null;
+    }
+  }, [isConnected, sincronizarUltimasMensagens]);
+
+  useEffect(() => {
+    if (isConnected) {
+      watchConversation(jid);
+      sincronizarUltimasMensagens();
+    }
+  }, [isConnected, jid, watchConversation, sincronizarUltimasMensagens]);
+
+  useEffect(() => {
+    return () => {
+      unwatchConversation(jid);
+    };
+  }, [jid, unwatchConversation]);
 
   const enviarMensagem = async (mensagemTexto?: string) => {
     const textoEnviar = mensagemTexto || texto;
@@ -128,7 +217,9 @@ export default function ChatScreen({ route, navigation }: Props) {
         enviada_por_ia: false,
       };
       setMensagens((prev) => [...prev, novaMensagem]);
-      setTimeout(() => flatListRef.current?.scrollToEnd(), 100);
+      if (isNearBottom) {
+        setTimeout(() => scrollToBottom(true), 100);
+      }
     } catch (error) {
       Alert.alert('Erro', 'Não foi possível enviar a mensagem');
     } finally {
@@ -161,7 +252,9 @@ export default function ChatScreen({ route, navigation }: Props) {
       }
       setSugestao(null);
       setOpcaoSelecionada(0);
-      setTimeout(() => flatListRef.current?.scrollToEnd(), 100);
+      if (isNearBottom) {
+        setTimeout(() => scrollToBottom(true), 100);
+      }
     } catch (error) {
       Alert.alert('Erro', 'Não foi possível enviar as mensagens');
     } finally {
@@ -279,11 +372,26 @@ export default function ChatScreen({ route, navigation }: Props) {
           { paddingBottom: Platform.OS === 'android' ? keyboardHeight : spacing.md }
         ]}
         style={styles.flatList}
-        onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
-        onLayout={() => flatListRef.current?.scrollToEnd({ animated: false })}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
+        maintainVisibleContentPosition={{ minIndexForVisible: 1 }}
+        onScroll={(event) => {
+          const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+          const distanceFromBottom = contentSize.height - layoutMeasurement.height - contentOffset.y;
+          setIsNearBottom(distanceFromBottom < 80);
+          if (contentOffset.y < 60) {
+            carregarMaisMensagens();
+          }
+        }}
+        scrollEventThrottle={16}
+        ListHeaderComponent={
+          loadingMore ? (
+            <View style={styles.loadingMore}>
+              <ActivityIndicator size="small" color={colors.primary} />
+            </View>
+          ) : null
+        }
       />
 
       {/* Sugestão da IA - Arquetipos psicológicos */}
@@ -481,6 +589,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: colors.chatBackground,
+  },
+  loadingMore: {
+    paddingVertical: spacing.sm,
   },
   listContent: {
     padding: spacing.md,

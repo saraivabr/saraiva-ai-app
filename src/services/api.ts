@@ -138,6 +138,33 @@ export const iaApi = {
 };
 
 // API de Perfil de Contatos
+// API de Sincronização
+export const syncApi = {
+  // Sincroniza histórico completo do WhatsApp
+  sincronizarHistorico: async (): Promise<{
+    status: string;
+    stats: {
+      chats_processados: number;
+      mensagens_novas: number;
+    };
+  }> => {
+    const response = await api.post('/sync', {}, { timeout: 120000 }); // 2 min timeout
+    return response.data;
+  },
+
+  // Sincroniza fotos de perfil de todos os contatos
+  sincronizarContatos: async (): Promise<{
+    status: string;
+    total_contatos: number;
+    atualizados: number;
+    erros: number;
+  }> => {
+    const response = await api.post('/contatos/sincronizar', {}, { timeout: 120000 });
+    return response.data;
+  },
+};
+
+// API de Perfil de Contatos
 export const perfilApi = {
   // Busca perfil de um contato
   get: async (jid: string): Promise<{

@@ -12,9 +12,10 @@ import {
   AppState,
   AppStateStatus,
   Image,
+  Alert,
 } from 'react-native';
 import { colors, spacing, fontSize, borderRadius } from '../theme/whatsapp';
-import { conversasApi, Conversa } from '../services/api';
+import { conversasApi, syncApi, Conversa } from '../services/api';
 import { useWebSocket } from '../hooks/useWebSocket';
 
 interface Props {
@@ -37,6 +38,7 @@ export default function ConversasScreen({ navigation }: Props) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [filtroAtivo, setFiltroAtivo] = useState<Filtro>('todos');
+  const [syncing, setSyncing] = useState(false);
 
   const carregarConversas = useCallback(async (filtro?: Filtro) => {
     try {
@@ -131,6 +133,44 @@ export default function ConversasScreen({ navigation }: Props) {
     carregarConversas(filtroAtivo);
   }, [carregarConversas, filtroAtivo]);
 
+  const sincronizarTudo = useCallback(async () => {
+    Alert.alert(
+      'Sincronizar',
+      'Isso vai puxar todo o histórico do WhatsApp e atualizar fotos. Pode demorar alguns minutos.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Sincronizar',
+          onPress: async () => {
+            setSyncing(true);
+            try {
+              // Sincroniza histórico de mensagens
+              const histResult = await syncApi.sincronizarHistorico();
+
+              // Sincroniza fotos de perfil
+              const fotoResult = await syncApi.sincronizarContatos();
+
+              // Recarrega lista
+              await carregarConversas(filtroAtivo);
+
+              Alert.alert(
+                'Sincronização Completa',
+                `📨 ${histResult.stats?.chats_processados || 0} conversas\n` +
+                `💬 ${histResult.stats?.mensagens_novas || 0} mensagens novas\n` +
+                `📷 ${fotoResult.atualizados || 0} fotos atualizadas`
+              );
+            } catch (error) {
+              console.error('Erro na sincronização:', error);
+              Alert.alert('Erro', 'Não foi possível sincronizar. Tente novamente.');
+            } finally {
+              setSyncing(false);
+            }
+          },
+        },
+      ]
+    );
+  }, [carregarConversas, filtroAtivo]);
+
   const selecionarFiltro = (filtro: Filtro) => {
     setFiltroAtivo(filtro);
     setLoading(true);
@@ -171,34 +211,48 @@ export default function ConversasScreen({ navigation }: Props) {
 
   const renderFiltros = () => (
     <View style={styles.filtrosWrapper}>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.filtrosContainer}
-      >
-        {FILTROS.map((filtro) => (
-          <TouchableOpacity
-            key={filtro.id}
-            style={[
-              styles.filtroChip,
-              filtroAtivo === filtro.id && styles.filtroChipAtivo,
-            ]}
-            onPress={() => selecionarFiltro(filtro.id)}
-          >
-            {filtro.icone ? (
-              <Text style={styles.filtroIcone}>{filtro.icone}</Text>
-            ) : null}
-            <Text
+      <View style={styles.filtrosRow}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filtrosContainer}
+          style={styles.filtrosScroll}
+        >
+          {FILTROS.map((filtro) => (
+            <TouchableOpacity
+              key={filtro.id}
               style={[
-                styles.filtroLabel,
-                filtroAtivo === filtro.id && styles.filtroLabelAtivo,
+                styles.filtroChip,
+                filtroAtivo === filtro.id && styles.filtroChipAtivo,
               ]}
+              onPress={() => selecionarFiltro(filtro.id)}
             >
-              {filtro.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
+              {filtro.icone ? (
+                <Text style={styles.filtroIcone}>{filtro.icone}</Text>
+              ) : null}
+              <Text
+                style={[
+                  styles.filtroLabel,
+                  filtroAtivo === filtro.id && styles.filtroLabelAtivo,
+                ]}
+              >
+                {filtro.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+        <TouchableOpacity
+          style={styles.syncButton}
+          onPress={sincronizarTudo}
+          disabled={syncing}
+        >
+          {syncing ? (
+            <ActivityIndicator size="small" color={colors.primary} />
+          ) : (
+            <Text style={styles.syncIcon}>🔄</Text>
+          )}
+        </TouchableOpacity>
+      </View>
     </View>
   );
 
@@ -311,10 +365,26 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.divider,
   },
+  filtrosRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  filtrosScroll: {
+    flex: 1,
+  },
   filtrosContainer: {
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     gap: spacing.sm,
+  },
+  syncButton: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  syncIcon: {
+    fontSize: 20,
   },
   filtroChip: {
     flexDirection: 'row',
