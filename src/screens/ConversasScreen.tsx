@@ -8,6 +8,8 @@ import {
   ActivityIndicator,
   RefreshControl,
   ScrollView,
+  SafeAreaView,
+  useWindowDimensions,
 } from 'react-native';
 import { colors, spacing, fontSize, borderRadius } from '../theme/whatsapp';
 import { conversasApi, Conversa } from '../services/api';
@@ -242,38 +244,48 @@ export default function ConversasScreen({ navigation }: Props) {
   }
 
   return (
-    <View style={styles.container}>
-      {renderFiltros()}
-      <FlatList
-        data={conversas}
-        keyExtractor={(item) => item.jid}
-        renderItem={renderConversa}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            colors={[colors.primary]}
-            tintColor={colors.primary}
-          />
-        }
-        ItemSeparatorComponent={() => <View style={styles.separator} />}
-        contentContainerStyle={styles.listContent}
-        ListEmptyComponent={
-          <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>
-              Nenhuma conversa {filtroAtivo !== 'todos' ? `em ${filtroAtivo}` : ''}
-            </Text>
-          </View>
-        }
-      />
-    </View>
+    <SafeAreaView style={styles.safeArea}>
+      <View style={styles.container}>
+        {renderFiltros()}
+        <FlatList
+          data={conversas}
+          keyExtractor={(item) => item.jid}
+          renderItem={renderConversa}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={[colors.primary]}
+              tintColor={colors.primary}
+            />
+          }
+          ItemSeparatorComponent={() => <View style={styles.separator} />}
+          contentContainerStyle={styles.listContent}
+          style={styles.flatList}
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyText}>
+                Nenhuma conversa {filtroAtivo !== 'todos' ? `em ${filtroAtivo}` : ''}
+              </Text>
+            </View>
+          }
+        />
+      </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
   container: {
     flex: 1,
     backgroundColor: colors.background,
+  },
+  flatList: {
+    flex: 1,
   },
   loadingContainer: {
     flex: 1,

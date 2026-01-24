@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Alert,
   TextInput,
+  SafeAreaView,
 } from 'react-native';
 import { colors, spacing, fontSize, borderRadius } from '../theme/whatsapp';
 import { perfilApi } from '../services/api';
@@ -120,8 +121,9 @@ export default function PerfilScreen({ route, navigation }: Props) {
   }
 
   return (
-    <ScrollView style={styles.container}>
-      {/* Avatar e nome */}
+    <SafeAreaView style={styles.safeArea}>
+      <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+        {/* Avatar e nome */}
       <View style={styles.header}>
         <View style={[styles.avatar, prioridade === 2 && styles.avatarVip]}>
           <Text style={styles.avatarText}>
@@ -255,12 +257,17 @@ export default function PerfilScreen({ route, navigation }: Props) {
         )}
       </TouchableOpacity>
 
-      <View style={{ height: 40 }} />
-    </ScrollView>
+        <View style={{ height: 40 }} />
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
   container: {
     flex: 1,
     backgroundColor: colors.background,

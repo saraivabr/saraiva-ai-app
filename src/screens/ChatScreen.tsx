@@ -10,6 +10,8 @@ import {
   KeyboardAvoidingView,
   Platform,
   Alert,
+  SafeAreaView,
+  useWindowDimensions,
 } from 'react-native';
 import { colors, spacing, fontSize, borderRadius } from '../theme/whatsapp';
 import { conversasApi, Mensagem, SugestaoResposta } from '../services/api';
@@ -28,6 +30,7 @@ export default function ChatScreen({ route, navigation }: Props) {
   const [sugerindo, setSugerindo] = useState(false);
   const [sugestao, setSugestao] = useState<SugestaoResposta | null>(null);
   const flatListRef = useRef<FlatList>(null);
+  const { width: screenWidth } = useWindowDimensions();
 
   useEffect(() => {
     navigation.setOptions({
@@ -149,11 +152,13 @@ export default function ChatScreen({ route, navigation }: Props) {
   const renderMensagem = ({ item }: { item: Mensagem }) => {
     const isEnviada = item.direcao === 'enviada';
     const isIA = item.enviada_por_ia;
+    const maxBubbleWidth = screenWidth * 0.75;
 
     return (
       <View
         style={[
           styles.mensagemContainer,
+          { maxWidth: maxBubbleWidth },
           isEnviada ? styles.mensagemEnviada : styles.mensagemRecebida,
         ]}
       >
@@ -210,7 +215,9 @@ export default function ChatScreen({ route, navigation }: Props) {
         keyExtractor={(item) => item.message_id || String(item.id)}
         renderItem={renderMensagem}
         contentContainerStyle={styles.listContent}
+        style={styles.flatList}
         onContentSizeChange={() => flatListRef.current?.scrollToEnd()}
+        showsVerticalScrollIndicator={false}
       />
 
       {/* Sugestão da IA - múltiplas mensagens como WhatsApp */}
@@ -307,6 +314,9 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.chatBackground,
   },
+  flatList: {
+    flex: 1,
+  },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -319,7 +329,6 @@ const styles = StyleSheet.create({
   },
   mensagemContainer: {
     marginVertical: spacing.xs,
-    maxWidth: '80%',
   },
   mensagemEnviada: {
     alignSelf: 'flex-end',

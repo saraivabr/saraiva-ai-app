@@ -9,6 +9,8 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  SafeAreaView,
+  useWindowDimensions,
 } from 'react-native';
 import { colors, spacing, fontSize, borderRadius } from '../theme/whatsapp';
 import { iaApi } from '../services/api';
@@ -28,6 +30,7 @@ const PROMPTS_RAPIDOS = [
 ];
 
 export default function IAScreen() {
+  const { width: screenWidth } = useWindowDimensions();
   const [mensagens, setMensagens] = useState<Mensagem[]>([
     {
       id: '1',
@@ -84,11 +87,13 @@ export default function IAScreen() {
 
   const renderMensagem = ({ item }: { item: Mensagem }) => {
     const isUsuario = item.remetente === 'usuario';
+    const maxBubbleWidth = screenWidth * 0.8;
 
     return (
       <View
         style={[
           styles.mensagemContainer,
+          { maxWidth: maxBubbleWidth },
           isUsuario ? styles.mensagemUsuario : styles.mensagemIA,
         ]}
       >
@@ -135,7 +140,9 @@ export default function IAScreen() {
         keyExtractor={(item) => item.id}
         renderItem={renderMensagem}
         contentContainerStyle={styles.listContent}
+        style={styles.flatList}
         onContentSizeChange={() => flatListRef.current?.scrollToEnd()}
+        showsVerticalScrollIndicator={false}
       />
 
       {/* Prompts rápidos */}
@@ -196,6 +203,9 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#1a1a2e', // Fundo mais escuro para aba IA
   },
+  flatList: {
+    flex: 1,
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -231,7 +241,6 @@ const styles = StyleSheet.create({
   },
   mensagemContainer: {
     marginVertical: spacing.xs,
-    maxWidth: '85%',
   },
   mensagemUsuario: {
     alignSelf: 'flex-end',
