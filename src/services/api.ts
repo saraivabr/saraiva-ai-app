@@ -14,6 +14,7 @@ const api = axios.create({
 export interface Conversa {
   jid: string;
   nome: string;
+  foto_url: string | null;
   tipo: 'privado' | 'grupo';
   ultima_mensagem: {
     texto: string | null;
@@ -51,7 +52,19 @@ export interface Tarefa {
   criada_em: string | null;
 }
 
+export interface OpcaoArquetipo {
+  tipo: string;
+  icone: string;
+  nome: string;
+  descricao: string;
+  mensagens: string[];
+}
+
 export interface SugestaoResposta {
+  formato: 'arquetipos' | 'simples';
+  analise?: string;
+  emocao?: string;
+  opcoes: OpcaoArquetipo[];
   mensagens: string[];
   texto_unico: string;
 }
