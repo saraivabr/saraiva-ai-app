@@ -24,6 +24,13 @@ export interface Conversa {
   total_mensagens: number;
   ia_automatica: boolean;
   ultima_interacao: string | null;
+  // Campos de perfil
+  categoria: string;
+  arquetipo: string;
+  nivel_conexao: string;
+  prioridade: number;
+  tags: string[];
+  perfil_resumo: string | null;
 }
 
 export interface Mensagem {
@@ -51,9 +58,9 @@ export interface SugestaoResposta {
 
 // API Functions
 export const conversasApi = {
-  // Lista todas as conversas
-  listar: async (): Promise<Conversa[]> => {
-    const response = await api.get('/conversas');
+  // Lista todas as conversas (pode filtrar por categoria/prioridade)
+  listar: async (params?: { categoria?: string; prioridade?: number }): Promise<Conversa[]> => {
+    const response = await api.get('/conversas', { params });
     return response.data.conversas;
   },
 
@@ -114,6 +121,49 @@ export const iaApi = {
   tarefas: async (): Promise<Tarefa[]> => {
     const response = await api.get('/ia/tarefas');
     return response.data.tarefas;
+  },
+};
+
+// API de Perfil de Contatos
+export const perfilApi = {
+  // Busca perfil de um contato
+  get: async (jid: string): Promise<{
+    jid: string;
+    nome: string;
+    categoria: string;
+    arquetipo: string;
+    nivel_conexao: string;
+    prioridade: number;
+    tags: string[];
+    perfil_resumo: string | null;
+    notas_ia: string | null;
+  }> => {
+    const response = await api.get(`/contatos/${encodeURIComponent(jid)}/perfil`);
+    return response.data;
+  },
+
+  // Atualiza perfil de um contato
+  atualizar: async (jid: string, dados: {
+    categoria?: string;
+    arquetipo?: string;
+    nivel_conexao?: string;
+    prioridade?: number;
+    tags?: string[];
+    notas_ia?: string;
+  }): Promise<void> => {
+    await api.put(`/contatos/${encodeURIComponent(jid)}/perfil`, dados);
+  },
+
+  // Analisa perfil automaticamente com IA
+  analisar: async (jid: string): Promise<any> => {
+    const response = await api.post(`/contatos/${encodeURIComponent(jid)}/analisar`);
+    return response.data;
+  },
+
+  // Analisa todos os contatos
+  analisarTodos: async (): Promise<{ analisados: number; erros: number }> => {
+    const response = await api.post('/contatos/analisar-todos');
+    return response.data.resultado;
   },
 };
 

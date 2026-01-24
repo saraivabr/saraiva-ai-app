@@ -7,23 +7,54 @@ import {
   StyleSheet,
   ActivityIndicator,
   RefreshControl,
-  Image,
+  ScrollView,
 } from 'react-native';
-import { colors, spacing, fontSize } from '../theme/whatsapp';
+import { colors, spacing, fontSize, borderRadius } from '../theme/whatsapp';
 import { conversasApi, Conversa } from '../services/api';
 
 interface Props {
   navigation: any;
 }
 
+type Filtro = 'todos' | 'trabalho' | 'pessoal' | 'familia' | 'negocios' | 'vip';
+
+const FILTROS: { id: Filtro; label: string; icone: string }[] = [
+  { id: 'todos', label: 'Todos', icone: '' },
+  { id: 'vip', label: 'VIP', icone: '⭐' },
+  { id: 'trabalho', label: 'Trabalho', icone: '💼' },
+  { id: 'pessoal', label: 'Pessoal', icone: '👤' },
+  { id: 'familia', label: 'Família', icone: '👨‍👩‍👧' },
+  { id: 'negocios', label: 'Negócios', icone: '💰' },
+];
+
+const CATEGORIA_CORES: Record<string, string> = {
+  trabalho: '#4A90D9',
+  pessoal: '#7B68EE',
+  familia: '#FF6B6B',
+  negocios: '#4CAF50',
+  vip: '#FFD700',
+  outro: '#9E9E9E',
+};
+
 export default function ConversasScreen({ navigation }: Props) {
   const [conversas, setConversas] = useState<Conversa[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [filtroAtivo, setFiltroAtivo] = useState<Filtro>('todos');
 
-  const carregarConversas = useCallback(async () => {
+  const carregarConversas = useCallback(async (filtro?: Filtro) => {
     try {
-      const data = await conversasApi.listar();
+      let params: { categoria?: string; prioridade?: number } = {};
+
+      if (filtro && filtro !== 'todos') {
+        if (filtro === 'vip') {
+          params.prioridade = 2;
+        } else {
+          params.categoria = filtro;
+        }
+      }
+
+      const data = await conversasApi.listar(params);
       setConversas(data);
     } catch (error) {
       console.error('Erro ao carregar conversas:', error);
@@ -34,13 +65,18 @@ export default function ConversasScreen({ navigation }: Props) {
   }, []);
 
   useEffect(() => {
-    carregarConversas();
-  }, [carregarConversas]);
+    carregarConversas(filtroAtivo);
+  }, [carregarConversas, filtroAtivo]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    carregarConversas();
-  }, [carregarConversas]);
+    carregarConversas(filtroAtivo);
+  }, [carregarConversas, filtroAtivo]);
+
+  const selecionarFiltro = (filtro: Filtro) => {
+    setFiltroAtivo(filtro);
+    setLoading(true);
+  };
 
   const formatarHora = (dataHora: string | null): string => {
     if (!dataHora) return '';
@@ -75,19 +111,82 @@ export default function ConversasScreen({ navigation }: Props) {
     return `${prefixo}${texto || ''}`;
   };
 
+  const getCategoriaIcone = (categoria: string): string => {
+    switch (categoria) {
+      case 'trabalho': return '💼';
+      case 'pessoal': return '👤';
+      case 'familia': return '👨‍👩‍👧';
+      case 'negocios': return '💰';
+      default: return '';
+    }
+  };
+
+  const renderFiltros = () => (
+    <View style={styles.filtrosWrapper}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.filtrosContainer}
+      >
+        {FILTROS.map((filtro) => (
+          <TouchableOpacity
+            key={filtro.id}
+            style={[
+              styles.filtroChip,
+              filtroAtivo === filtro.id && styles.filtroChipAtivo,
+            ]}
+            onPress={() => selecionarFiltro(filtro.id)}
+          >
+            {filtro.icone ? (
+              <Text style={styles.filtroIcone}>{filtro.icone}</Text>
+            ) : null}
+            <Text
+              style={[
+                styles.filtroLabel,
+                filtroAtivo === filtro.id && styles.filtroLabelAtivo,
+              ]}
+            >
+              {filtro.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+    </View>
+  );
+
   const renderConversa = ({ item }: { item: Conversa }) => (
     <TouchableOpacity
       style={styles.conversaItem}
       onPress={() => navigation.navigate('Chat', { jid: item.jid, nome: item.nome })}
+      onLongPress={() => navigation.navigate('Perfil', { jid: item.jid, nome: item.nome })}
       activeOpacity={0.7}
     >
       {/* Avatar */}
       <View style={styles.avatarContainer}>
-        <View style={styles.avatar}>
+        <View style={[
+          styles.avatar,
+          item.prioridade === 2 && styles.avatarVip
+        ]}>
           <Text style={styles.avatarText}>
             {item.nome?.charAt(0)?.toUpperCase() || '?'}
           </Text>
         </View>
+        {/* Indicador de categoria */}
+        {item.categoria && item.categoria !== 'pessoal' && (
+          <View style={[
+            styles.categoriaIndicator,
+            { backgroundColor: CATEGORIA_CORES[item.categoria] || CATEGORIA_CORES.outro }
+          ]}>
+            <Text style={styles.categoriaIcone}>{getCategoriaIcone(item.categoria)}</Text>
+          </View>
+        )}
+        {/* Indicador VIP */}
+        {item.prioridade === 2 && (
+          <View style={styles.vipBadge}>
+            <Text style={styles.vipText}>⭐</Text>
+          </View>
+        )}
+        {/* Indicador IA */}
         {item.ia_automatica && (
           <View style={styles.iaIndicator}>
             <Text style={styles.iaIndicatorText}>✨</Text>
@@ -98,21 +197,43 @@ export default function ConversasScreen({ navigation }: Props) {
       {/* Info */}
       <View style={styles.conversaInfo}>
         <View style={styles.conversaHeader}>
-          <Text style={styles.nome} numberOfLines={1}>
-            {item.nome || item.jid.split('@')[0]}
-          </Text>
+          <View style={styles.nomeContainer}>
+            <Text style={styles.nome} numberOfLines={1}>
+              {item.nome || item.jid.split('@')[0]}
+            </Text>
+            {/* Tags */}
+            {item.tags && item.tags.length > 0 && (
+              <View style={styles.tagsContainer}>
+                {item.tags.slice(0, 2).map((tag, i) => (
+                  <View key={i} style={styles.tag}>
+                    <Text style={styles.tagText}>{tag}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
           <Text style={styles.hora}>
             {formatarHora(item.ultima_mensagem?.data_hora || item.ultima_interacao)}
           </Text>
         </View>
-        <Text style={styles.ultimaMensagem} numberOfLines={1}>
-          {getUltimaMensagemTexto(item)}
-        </Text>
+        <View style={styles.mensagemRow}>
+          <Text style={styles.ultimaMensagem} numberOfLines={1}>
+            {getUltimaMensagemTexto(item)}
+          </Text>
+          {/* Arquétipo badge */}
+          {item.arquetipo && item.arquetipo !== 'casual' && (
+            <View style={styles.arquetipoBadge}>
+              <Text style={styles.arquetipoText}>
+                {item.arquetipo === 'formal' ? '🎩' : item.arquetipo === 'intimo' ? '❤️' : '👔'}
+              </Text>
+            </View>
+          )}
+        </View>
       </View>
     </TouchableOpacity>
   );
 
-  if (loading) {
+  if (loading && conversas.length === 0) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={colors.primary} />
@@ -122,6 +243,7 @@ export default function ConversasScreen({ navigation }: Props) {
 
   return (
     <View style={styles.container}>
+      {renderFiltros()}
       <FlatList
         data={conversas}
         keyExtractor={(item) => item.jid}
@@ -136,6 +258,13 @@ export default function ConversasScreen({ navigation }: Props) {
         }
         ItemSeparatorComponent={() => <View style={styles.separator} />}
         contentContainerStyle={styles.listContent}
+        ListEmptyComponent={
+          <View style={styles.emptyContainer}>
+            <Text style={styles.emptyText}>
+              Nenhuma conversa {filtroAtivo !== 'todos' ? `em ${filtroAtivo}` : ''}
+            </Text>
+          </View>
+        }
       />
     </View>
   );
@@ -152,6 +281,42 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: colors.background,
   },
+  // Filtros
+  filtrosWrapper: {
+    backgroundColor: colors.background,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.divider,
+  },
+  filtrosContainer: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    gap: spacing.sm,
+  },
+  filtroChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadius.xl,
+    backgroundColor: colors.inputBackground,
+    marginRight: spacing.sm,
+  },
+  filtroChipAtivo: {
+    backgroundColor: colors.primary,
+  },
+  filtroIcone: {
+    fontSize: 14,
+    marginRight: spacing.xs,
+  },
+  filtroLabel: {
+    fontSize: fontSize.sm,
+    color: colors.textSecondary,
+    fontWeight: '500',
+  },
+  filtroLabelAtivo: {
+    color: colors.textLight,
+  },
+  // Lista
   listContent: {
     paddingVertical: spacing.sm,
   },
@@ -172,10 +337,43 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  avatarVip: {
+    borderWidth: 2,
+    borderColor: '#FFD700',
+  },
   avatarText: {
     color: colors.textLight,
     fontSize: fontSize.xl,
     fontWeight: '600',
+  },
+  categoriaIndicator: {
+    position: 'absolute',
+    bottom: -2,
+    left: -2,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: colors.background,
+  },
+  categoriaIcone: {
+    fontSize: 10,
+  },
+  vipBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: colors.background,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  vipText: {
+    fontSize: 12,
   },
   iaIndicator: {
     position: 'absolute',
@@ -199,27 +397,65 @@ const styles = StyleSheet.create({
   conversaHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     marginBottom: spacing.xs,
+  },
+  nomeContainer: {
+    flex: 1,
+    marginRight: spacing.sm,
   },
   nome: {
     fontSize: fontSize.lg,
     fontWeight: '500',
     color: colors.textPrimary,
-    flex: 1,
-    marginRight: spacing.sm,
+  },
+  tagsContainer: {
+    flexDirection: 'row',
+    marginTop: 2,
+    gap: 4,
+  },
+  tag: {
+    backgroundColor: colors.inputBackground,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  tagText: {
+    fontSize: 10,
+    color: colors.textSecondary,
   },
   hora: {
     fontSize: fontSize.xs,
     color: colors.textTime,
   },
+  mensagemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   ultimaMensagem: {
     fontSize: fontSize.sm,
     color: colors.textSecondary,
+    flex: 1,
+  },
+  arquetipoBadge: {
+    marginLeft: spacing.sm,
+  },
+  arquetipoText: {
+    fontSize: 12,
   },
   separator: {
     height: 1,
     backgroundColor: colors.divider,
-    marginLeft: 82, // avatar width + padding
+    marginLeft: 82,
+  },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: spacing.xl * 2,
+  },
+  emptyText: {
+    fontSize: fontSize.md,
+    color: colors.textSecondary,
   },
 });

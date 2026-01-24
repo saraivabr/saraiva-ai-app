@@ -8,6 +8,7 @@ import { Text, View } from 'react-native';
 import ConversasScreen from './src/screens/ConversasScreen';
 import ChatScreen from './src/screens/ChatScreen';
 import IAScreen from './src/screens/IAScreen';
+import PerfilScreen from './src/screens/PerfilScreen';
 import { colors } from './src/theme/whatsapp';
 
 const Stack = createNativeStackNavigator();
@@ -120,6 +121,13 @@ export default function App() {
           component={ChatScreen}
           options={({ route }: any) => ({
             title: route.params?.nome || 'Chat',
+          })}
+        />
+        <Stack.Screen
+          name="Perfil"
+          component={PerfilScreen}
+          options={({ route }: any) => ({
+            title: route.params?.nome || 'Perfil',
           })}
         />
       </Stack.Navigator>
