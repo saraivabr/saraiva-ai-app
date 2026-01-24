@@ -12,7 +12,7 @@ import {
   Alert,
 } from 'react-native';
 import { colors, spacing, fontSize, borderRadius } from '../theme/whatsapp';
-import { conversasApi, Mensagem } from '../services/api';
+import { conversasApi, Mensagem, SugestaoResposta } from '../services/api';
 
 interface Props {
   route: any;
@@ -26,7 +26,7 @@ export default function ChatScreen({ route, navigation }: Props) {
   const [texto, setTexto] = useState('');
   const [enviando, setEnviando] = useState(false);
   const [sugerindo, setSugerindo] = useState(false);
-  const [sugestao, setSugestao] = useState<string | null>(null);
+  const [sugestao, setSugestao] = useState<SugestaoResposta | null>(null);
   const flatListRef = useRef<FlatList>(null);
 
   useEffect(() => {
@@ -60,7 +60,6 @@ export default function ChatScreen({ route, navigation }: Props) {
     try {
       await conversasApi.enviar(jid, textoEnviar);
       setTexto('');
-      setSugestao(null);
       // Adiciona mensagem localmente
       const novaMensagem: Mensagem = {
         id: Date.now(),
@@ -78,6 +77,52 @@ export default function ChatScreen({ route, navigation }: Props) {
       Alert.alert('Erro', 'Não foi possível enviar a mensagem');
     } finally {
       setEnviando(false);
+    }
+  };
+
+  // Envia todas as mensagens sugeridas em sequência (como humano faria)
+  const enviarTodasSugestoes = async () => {
+    if (!sugestao || sugestao.mensagens.length === 0) return;
+
+    setEnviando(true);
+    try {
+      for (const msg of sugestao.mensagens) {
+        await conversasApi.enviar(jid, msg);
+        // Adiciona mensagem localmente
+        const novaMensagem: Mensagem = {
+          id: Date.now() + Math.random(),
+          message_id: `sent_${Date.now()}_${Math.random()}`,
+          tipo: 'texto',
+          conteudo: msg,
+          direcao: 'enviada',
+          duracao_audio: null,
+          data_hora: new Date().toISOString(),
+          enviada_por_ia: true,
+        };
+        setMensagens((prev) => [...prev, novaMensagem]);
+        // Pequeno delay entre mensagens (como humano)
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
+      setSugestao(null);
+      setTimeout(() => flatListRef.current?.scrollToEnd(), 100);
+    } catch (error) {
+      Alert.alert('Erro', 'Não foi possível enviar as mensagens');
+    } finally {
+      setEnviando(false);
+    }
+  };
+
+  // Remove uma mensagem específica da sugestão
+  const removerSugestao = (index: number) => {
+    if (!sugestao) return;
+    const novasMensagens = sugestao.mensagens.filter((_, i) => i !== index);
+    if (novasMensagens.length === 0) {
+      setSugestao(null);
+    } else {
+      setSugestao({
+        mensagens: novasMensagens,
+        texto_unico: novasMensagens.join(' | ')
+      });
     }
   };
 
@@ -168,23 +213,45 @@ export default function ChatScreen({ route, navigation }: Props) {
         onContentSizeChange={() => flatListRef.current?.scrollToEnd()}
       />
 
-      {/* Sugestão da IA */}
-      {sugestao && (
+      {/* Sugestão da IA - múltiplas mensagens como WhatsApp */}
+      {sugestao && sugestao.mensagens.length > 0 && (
         <View style={styles.sugestaoContainer}>
-          <Text style={styles.sugestaoLabel}>Sugestão da IA:</Text>
-          <Text style={styles.sugestaoTexto}>{sugestao}</Text>
+          <Text style={styles.sugestaoLabel}>
+            Sugestão ({sugestao.mensagens.length} {sugestao.mensagens.length === 1 ? 'msg' : 'msgs'}):
+          </Text>
+
+          {/* Preview das mensagens como bolhas */}
+          <View style={styles.sugestaoMensagens}>
+            {sugestao.mensagens.map((msg, index) => (
+              <View key={index} style={styles.sugestaoMsgItem}>
+                <View style={styles.sugestaoMsgBalao}>
+                  <Text style={styles.sugestaoMsgTexto}>{msg}</Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.sugestaoMsgRemover}
+                  onPress={() => removerSugestao(index)}
+                >
+                  <Text style={styles.sugestaoMsgRemoverTexto}>x</Text>
+                </TouchableOpacity>
+              </View>
+            ))}
+          </View>
+
           <View style={styles.sugestaoBotoes}>
             <TouchableOpacity
               style={[styles.sugestaoBotao, styles.sugestaoBotaoEnviar]}
-              onPress={() => enviarMensagem(sugestao)}
+              onPress={enviarTodasSugestoes}
+              disabled={enviando}
             >
-              <Text style={styles.sugestaoBotaoTexto}>✓ Enviar</Text>
+              <Text style={styles.sugestaoBotaoTexto}>
+                {enviando ? 'Enviando...' : 'Enviar todas'}
+              </Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.sugestaoBotao, styles.sugestaoBotaoDescartar]}
               onPress={() => setSugestao(null)}
             >
-              <Text style={styles.sugestaoBotaoTextoDescartar}>✕ Descartar</Text>
+              <Text style={styles.sugestaoBotaoTextoDescartar}>Descartar</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -331,6 +398,40 @@ const styles = StyleSheet.create({
     fontSize: fontSize.md,
     color: colors.textPrimary,
     marginBottom: spacing.sm,
+  },
+  sugestaoMensagens: {
+    marginBottom: spacing.sm,
+  },
+  sugestaoMsgItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: spacing.xs,
+  },
+  sugestaoMsgBalao: {
+    flex: 1,
+    backgroundColor: colors.bubbleSent,
+    padding: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: borderRadius.bubble,
+    borderTopRightRadius: 0,
+  },
+  sugestaoMsgTexto: {
+    fontSize: fontSize.md,
+    color: colors.textPrimary,
+  },
+  sugestaoMsgRemover: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: 'rgba(0,0,0,0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: spacing.sm,
+  },
+  sugestaoMsgRemoverTexto: {
+    fontSize: fontSize.sm,
+    color: colors.textSecondary,
+    fontWeight: '600',
   },
   sugestaoBotoes: {
     flexDirection: 'row',

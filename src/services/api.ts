@@ -44,6 +44,11 @@ export interface Tarefa {
   criada_em: string | null;
 }
 
+export interface SugestaoResposta {
+  mensagens: string[];
+  texto_unico: string;
+}
+
 // API Functions
 export const conversasApi = {
   // Lista todas as conversas
@@ -69,8 +74,8 @@ export const conversasApi = {
     await api.post(`/conversas/${encodeURIComponent(jid)}/enviar`, { texto });
   },
 
-  // Solicita sugestão da IA
-  sugerir: async (jid: string, contexto?: string): Promise<string> => {
+  // Solicita sugestão da IA (retorna múltiplas mensagens humanizadas)
+  sugerir: async (jid: string, contexto?: string): Promise<SugestaoResposta> => {
     const response = await api.post(`/conversas/${encodeURIComponent(jid)}/sugerir`, {
       contexto,
     });
