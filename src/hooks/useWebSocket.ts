@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
 
-const WS_URL = 'wss://ultron-v2.osc-fr1.scalingo.io/api/ws';
+const WS_URL = 'wss://ultron-v2.osc-fr1.scalingo.io/ws';
 
 interface WebSocketMessage {
   type: string;
