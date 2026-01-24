@@ -69,6 +69,44 @@ export interface SugestaoResposta {
   texto_unico: string;
 }
 
+// Tipos de Agentes de Missão
+export interface TipoAgente {
+  id: string;
+  nome: string;
+  icone: string;
+  descricao: string;
+  tecnicas: string[];
+  tom: string;
+}
+
+export interface AgenteMissao {
+  id: number;
+  jid: string;
+  nome_contato: string;
+  foto_url?: string | null;
+  tipo: string;
+  tipo_info: TipoAgente;
+  modo: 'automatico' | 'aprovacao' | 'hibrido';
+  foco: string;
+  meta?: string | null;
+  prazo?: string | null;
+  status: 'ativo' | 'pausado' | 'concluido' | 'falhou';
+  progresso?: string;
+  mensagens_enviadas: number;
+  mensagens_aprovadas?: number;
+  mensagens_rejeitadas?: number;
+  criado_em?: string;
+  ultima_acao?: string;
+}
+
+export interface SugestaoAgente {
+  mensagens: string[];
+  analise: string;
+  estrategia: string;
+  confianca: number;
+  progresso?: string;
+}
+
 // API Functions
 export const conversasApi = {
   // Lista todas as conversas (pode filtrar por categoria/prioridade)
@@ -204,6 +242,92 @@ export const perfilApi = {
   analisarTodos: async (): Promise<{ analisados: number; erros: number }> => {
     const response = await api.post('/contatos/analisar-todos');
     return response.data.resultado;
+  },
+};
+
+// API de Agentes de Missão
+export const agentesApi = {
+  // Lista tipos de agentes disponíveis
+  listarTipos: async (): Promise<{ tipos: TipoAgente[] }> => {
+    const response = await api.get('/agentes/tipos');
+    return response.data;
+  },
+
+  // Lista agentes ativos
+  listarAtivos: async (): Promise<{ agentes: AgenteMissao[]; total: number }> => {
+    const response = await api.get('/agentes/ativos');
+    return response.data;
+  },
+
+  // Busca agente de uma conversa
+  get: async (jid: string): Promise<{ agente: AgenteMissao | null }> => {
+    const response = await api.get(`/agentes/${encodeURIComponent(jid)}`);
+    return response.data;
+  },
+
+  // Ativa agente para uma conversa
+  ativar: async (dados: {
+    jid: string;
+    tipo: string;
+    modo: 'automatico' | 'aprovacao' | 'hibrido';
+    foco: string;
+    meta?: string;
+    prazo?: string;
+  }): Promise<{ status: string; mensagem: string; agente_id: number }> => {
+    const response = await api.post('/agentes/ativar', dados);
+    return response.data;
+  },
+
+  // Atualiza configuração do agente
+  atualizar: async (jid: string, dados: {
+    modo?: string;
+    foco?: string;
+    meta?: string;
+    prazo?: string;
+  }): Promise<void> => {
+    await api.put(`/agentes/${encodeURIComponent(jid)}`, dados);
+  },
+
+  // Pausa agente
+  pausar: async (jid: string): Promise<void> => {
+    await api.post(`/agentes/${encodeURIComponent(jid)}/pausar`);
+  },
+
+  // Retoma agente pausado
+  retomar: async (jid: string): Promise<void> => {
+    await api.post(`/agentes/${encodeURIComponent(jid)}/retomar`);
+  },
+
+  // Conclui missão
+  concluir: async (jid: string, sucesso: boolean = true): Promise<void> => {
+    await api.post(`/agentes/${encodeURIComponent(jid)}/concluir`, null, {
+      params: { sucesso },
+    });
+  },
+
+  // Desativa/remove agente
+  desativar: async (jid: string): Promise<void> => {
+    await api.delete(`/agentes/${encodeURIComponent(jid)}`);
+  },
+
+  // Gera resposta do agente
+  gerarResposta: async (jid: string, mensagem: string): Promise<{
+    agente_tipo: string;
+    agente_modo: string;
+    foco: string;
+    sugestao: SugestaoAgente;
+  }> => {
+    const response = await api.post(`/agentes/${encodeURIComponent(jid)}/gerar-resposta`, {
+      mensagem,
+    });
+    return response.data;
+  },
+
+  // Registra envio de mensagem
+  registrarEnvio: async (jid: string, aprovado: boolean): Promise<void> => {
+    await api.post(`/agentes/${encodeURIComponent(jid)}/registrar-envio`, {
+      aprovado,
+    });
   },
 };
 

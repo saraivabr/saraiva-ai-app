@@ -15,11 +15,17 @@ import {
   ScrollView,
 } from 'react-native';
 import { colors, spacing, fontSize, borderRadius } from '../theme/whatsapp';
-import { conversasApi, Mensagem, SugestaoResposta, OpcaoArquetipo } from '../services/api';
+import { conversasApi, agentesApi, Mensagem, SugestaoResposta, OpcaoArquetipo, AgenteMissao, SugestaoAgente } from '../services/api';
 import { useWebSocket } from '../hooks/useWebSocket';
+import { loadCachedMensagens, saveCachedMensagens } from '../services/cache';
+import { useConnectivity } from '../hooks/useConnectivity';
+import AtivarAgenteModal from '../components/AtivarAgenteModal';
+import AgenteBadge from '../components/AgenteBadge';
 
 const INPUT_ACCESSORY_ID = 'chatInputAccessory';
 const PAGE_SIZE = 50;
+const BOTTOM_THRESHOLD = 120;
+const LOAD_MORE_THRESHOLD = 80;
 
 interface Props {
   route: any;
@@ -42,16 +48,56 @@ export default function ChatScreen({ route, navigation }: Props) {
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
   const [offset, setOffset] = useState(0);
+  const [totalMensagens, setTotalMensagens] = useState(0);
   const [hasMore, setHasMore] = useState(true);
   const [isNearBottom, setIsNearBottom] = useState(true);
+  const { isOnline } = useConnectivity();
+
+  // Estado do agente
+  const [agente, setAgente] = useState<AgenteMissao | null>(null);
+  const [modalAgenteVisivel, setModalAgenteVisivel] = useState(false);
+  const [sugestaoAgente, setSugestaoAgente] = useState<SugestaoAgente | null>(null);
+  const [gerandoSugestaoAgente, setGerandoSugestaoAgente] = useState(false);
+
+  // Carrega agente ativo para esta conversa
+  const carregarAgente = useCallback(async () => {
+    try {
+      const data = await agentesApi.get(jid);
+      setAgente(data.agente);
+    } catch (error) {
+      console.error('Erro ao carregar agente:', error);
+    }
+  }, [jid]);
+
+  useEffect(() => {
+    carregarAgente();
+  }, [carregarAgente]);
 
   useEffect(() => {
     navigation.setOptions({
       title: nome || jid.split('@')[0],
-      headerStyle: { backgroundColor: colors.primary },
+      headerStyle: { backgroundColor: agente ? colors.iaAccent : colors.primary },
       headerTintColor: colors.textLight,
+      headerRight: () => (
+        <TouchableOpacity
+          style={{ marginRight: spacing.md }}
+          onPress={() => setModalAgenteVisivel(true)}
+        >
+          {agente ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Text style={{ fontSize: 18, marginRight: 4 }}>{agente.tipo_info?.icone || '🎯'}</Text>
+              <View style={{
+                width: 8, height: 8, borderRadius: 4,
+                backgroundColor: agente.status === 'ativo' ? colors.secondary : '#FFA500'
+              }} />
+            </View>
+          ) : (
+            <Text style={{ fontSize: 20 }}>🎯</Text>
+          )}
+        </TouchableOpacity>
+      ),
     });
-  }, [navigation, nome, jid]);
+  }, [navigation, nome, jid, agente]);
 
   // Listener do teclado para ajustar a view
   useEffect(() => {
@@ -73,6 +119,27 @@ export default function ChatScreen({ route, navigation }: Props) {
     };
   }, []);
 
+  useEffect(() => {
+    let isMounted = true;
+    loadCachedMensagens(jid).then((cached) => {
+      if (!isMounted || !cached) return;
+      setMensagens(cached.data.mensagens);
+      setOffset(cached.data.mensagens.length);
+      setTotalMensagens(cached.data.total);
+      atualizarHasMore(cached.data.mensagens.length, cached.data.total);
+      setLoading(false);
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [jid, atualizarHasMore]);
+
+  useEffect(() => {
+    if (mensagens.length === 0) return;
+    saveCachedMensagens(jid, mensagens, totalMensagens).catch(() => {});
+  }, [jid, mensagens, totalMensagens]);
+
   const scrollToBottom = useCallback((animated = true) => {
     flatListRef.current?.scrollToEnd({ animated });
   }, []);
@@ -81,11 +148,16 @@ export default function ChatScreen({ route, navigation }: Props) {
     setHasMore(nextOffset < nextTotal);
   }, []);
 
+  useEffect(() => {
+    atualizarHasMore(offset, totalMensagens);
+  }, [offset, totalMensagens, atualizarHasMore]);
+
   const carregarMensagens = useCallback(async (silent = false) => {
     try {
       const data = await conversasApi.mensagens(jid, PAGE_SIZE, 0);
       setMensagens(data.mensagens);
       setOffset(data.mensagens.length);
+      setTotalMensagens(data.total);
       atualizarHasMore(data.mensagens.length, data.total);
       if (!silent) {
         setTimeout(() => scrollToBottom(false), 0);
@@ -109,6 +181,7 @@ export default function ChatScreen({ route, navigation }: Props) {
       });
       const nextOffset = offset + data.mensagens.length;
       setOffset(nextOffset);
+      setTotalMensagens(data.total);
       atualizarHasMore(nextOffset, data.total);
     } catch (error) {
       console.error('Erro ao carregar mensagens antigas:', error);
@@ -131,6 +204,7 @@ export default function ChatScreen({ route, navigation }: Props) {
         });
         return merged;
       });
+      setTotalMensagens(data.total);
       atualizarHasMore(offset, data.total);
       if (isNearBottom) {
         setTimeout(() => scrollToBottom(true), 0);
@@ -217,6 +291,8 @@ export default function ChatScreen({ route, navigation }: Props) {
         enviada_por_ia: false,
       };
       setMensagens((prev) => [...prev, novaMensagem]);
+      setOffset((prev) => prev + 1);
+      setTotalMensagens((prev) => prev + 1);
       if (isNearBottom) {
         setTimeout(() => scrollToBottom(true), 100);
       }
@@ -247,6 +323,8 @@ export default function ChatScreen({ route, navigation }: Props) {
           enviada_por_ia: true,
         };
         setMensagens((prev) => [...prev, novaMensagem]);
+        setOffset((prev) => prev + 1);
+        setTotalMensagens((prev) => prev + 1);
         // Pequeno delay entre mensagens (como humano)
         await new Promise(resolve => setTimeout(resolve, 300));
       }
@@ -283,14 +361,59 @@ export default function ChatScreen({ route, navigation }: Props) {
   };
 
   const solicitarSugestao = async () => {
-    setSugerindo(true);
-    try {
-      const resposta = await conversasApi.sugerir(jid);
-      setSugestao(resposta);
-    } catch (error) {
-      Alert.alert('Erro', 'Não foi possível gerar sugestão');
-    } finally {
-      setSugerindo(false);
+    // Se tem agente ativo, usa sugestão do agente
+    if (agente && agente.status === 'ativo') {
+      setGerandoSugestaoAgente(true);
+      try {
+        // Pega a ultima mensagem recebida
+        const ultimaRecebida = mensagens.filter(m => m.direcao === 'recebida').pop();
+        const mensagemContexto = ultimaRecebida?.conteudo || '';
+
+        const resposta = await agentesApi.gerarResposta(jid, mensagemContexto);
+        setSugestaoAgente(resposta.sugestao);
+        // Converte para formato de sugestao normal para reutilizar o mesmo componente
+        setSugestao({
+          formato: 'simples',
+          mensagens: resposta.sugestao.mensagens,
+          texto_unico: resposta.sugestao.mensagens.join(' | '),
+          opcoes: [{
+            tipo: agente.tipo,
+            icone: agente.tipo_info?.icone || '🎯',
+            nome: `${agente.tipo_info?.nome || 'Agente'} (${resposta.sugestao.confianca}%)`,
+            descricao: resposta.sugestao.estrategia,
+            mensagens: resposta.sugestao.mensagens,
+          }],
+          analise: resposta.sugestao.analise,
+        });
+      } catch (error) {
+        Alert.alert('Erro', 'Nao foi possivel gerar sugestao do agente');
+      } finally {
+        setGerandoSugestaoAgente(false);
+      }
+    } else {
+      // Sugestao normal
+      setSugerindo(true);
+      try {
+        const resposta = await conversasApi.sugerir(jid);
+        setSugestao(resposta);
+      } catch (error) {
+        Alert.alert('Erro', 'Nao foi possivel gerar sugestao');
+      } finally {
+        setSugerindo(false);
+      }
+    }
+  };
+
+  // Registra envio de mensagem do agente
+  const registrarEnvioAgente = async (aprovado: boolean) => {
+    if (agente) {
+      try {
+        await agentesApi.registrarEnvio(jid, aprovado);
+        // Recarrega agente para atualizar metricas
+        carregarAgente();
+      } catch (error) {
+        console.error('Erro ao registrar envio:', error);
+      }
     }
   };
 
@@ -361,6 +484,24 @@ export default function ChatScreen({ route, navigation }: Props) {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
     >
+      {!isOnline && (
+        <View style={styles.statusBannerOffline}>
+          <Text style={styles.statusBannerText}>Sem conexão • mostrando cache</Text>
+        </View>
+      )}
+      {isOnline && !isConnected && (
+        <View style={styles.statusBannerWarning}>
+          <Text style={styles.statusBannerText}>Tempo real pausado • usando sincronização</Text>
+        </View>
+      )}
+      {/* Badge do agente ativo */}
+      {agente && (
+        <AgenteBadge
+          agente={agente}
+          onPress={() => setModalAgenteVisivel(true)}
+        />
+      )}
+
       {/* Lista de mensagens */}
       <FlatList
         ref={flatListRef}
@@ -379,8 +520,8 @@ export default function ChatScreen({ route, navigation }: Props) {
         onScroll={(event) => {
           const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
           const distanceFromBottom = contentSize.height - layoutMeasurement.height - contentOffset.y;
-          setIsNearBottom(distanceFromBottom < 80);
-          if (contentOffset.y < 60) {
+          setIsNearBottom(distanceFromBottom < BOTTOM_THRESHOLD);
+          if (!loading && contentOffset.y < LOAD_MORE_THRESHOLD) {
             carregarMaisMensagens();
           }
         }}
@@ -543,16 +684,21 @@ export default function ChatScreen({ route, navigation }: Props) {
           maxLength={4096}
         />
 
-        {/* Botão Sugerir (varinha mágica) */}
+        {/* Botão Sugerir (varinha mágica ou agente) */}
         <TouchableOpacity
-          style={styles.sugerirBotao}
+          style={[
+            styles.sugerirBotao,
+            agente && agente.status === 'ativo' && styles.sugerirBotaoAgente,
+          ]}
           onPress={solicitarSugestao}
-          disabled={sugerindo}
+          disabled={sugerindo || gerandoSugestaoAgente}
         >
-          {sugerindo ? (
+          {sugerindo || gerandoSugestaoAgente ? (
             <ActivityIndicator size="small" color={colors.iaAccent} />
           ) : (
-            <Text style={styles.sugerirIcone}>🪄</Text>
+            <Text style={styles.sugerirIcone}>
+              {agente && agente.status === 'ativo' ? (agente.tipo_info?.icone || '🎯') : '🪄'}
+            </Text>
           )}
         </TouchableOpacity>
 
@@ -572,6 +718,20 @@ export default function ChatScreen({ route, navigation }: Props) {
           )}
         </TouchableOpacity>
       </View>
+
+      {/* Modal de ativar/editar agente */}
+      <AtivarAgenteModal
+        visible={modalAgenteVisivel}
+        onClose={() => setModalAgenteVisivel(false)}
+        jid={jid}
+        nomeContato={nome}
+        agenteAtivo={agente}
+        onAgenteAtivado={(novoAgente) => {
+          setAgente(novoAgente);
+          setSugestao(null);
+          setSugestaoAgente(null);
+        }}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -592,6 +752,25 @@ const styles = StyleSheet.create({
   },
   loadingMore: {
     paddingVertical: spacing.sm,
+  },
+  statusBannerOffline: {
+    backgroundColor: '#FFE8E8',
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F5C2C2',
+  },
+  statusBannerWarning: {
+    backgroundColor: '#FFF3D6',
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F2D199',
+  },
+  statusBannerText: {
+    color: colors.textSecondary,
+    fontSize: fontSize.xs,
+    textAlign: 'center',
   },
   listContent: {
     padding: spacing.md,
@@ -834,6 +1013,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: spacing.sm,
+  },
+  sugerirBotaoAgente: {
+    backgroundColor: colors.iaAccentLight,
+    borderWidth: 2,
+    borderColor: colors.iaAccent,
   },
   sugerirIcone: {
     fontSize: 22,

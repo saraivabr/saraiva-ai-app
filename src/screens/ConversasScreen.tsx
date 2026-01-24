@@ -15,8 +15,11 @@ import {
   Alert,
 } from 'react-native';
 import { colors, spacing, fontSize, borderRadius } from '../theme/whatsapp';
-import { conversasApi, syncApi, Conversa } from '../services/api';
+import { conversasApi, syncApi, agentesApi, Conversa, AgenteMissao } from '../services/api';
 import { useWebSocket } from '../hooks/useWebSocket';
+import { loadCachedConversations, saveCachedConversations } from '../services/cache';
+import { useConnectivity } from '../hooks/useConnectivity';
+import AtivarAgenteModal from '../components/AtivarAgenteModal';
 
 interface Props {
   navigation: any;
@@ -38,22 +41,31 @@ export default function ConversasScreen({ navigation }: Props) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [filtroAtivo, setFiltroAtivo] = useState<Filtro>('todos');
+  const { isOnline } = useConnectivity();
   const [syncing, setSyncing] = useState(false);
+
+  // Estado do modal de agentes
+  const [modalAgenteVisivel, setModalAgenteVisivel] = useState(false);
+  const [conversaSelecionada, setConversaSelecionada] = useState<Conversa | null>(null);
+  const [agenteAtivo, setAgenteAtivo] = useState<AgenteMissao | null>(null);
+  const [agentesAtivos, setAgentesAtivos] = useState<Map<string, AgenteMissao>>(new Map());
 
   const carregarConversas = useCallback(async (filtro?: Filtro) => {
     try {
+      const filtroKey = filtro ?? 'todos';
       let params: { categoria?: string; prioridade?: number } = {};
 
-      if (filtro && filtro !== 'todos') {
-        if (filtro === 'vip') {
+      if (filtroKey !== 'todos') {
+        if (filtroKey === 'vip') {
           params.prioridade = 2;
         } else {
-          params.categoria = filtro;
+          params.categoria = filtroKey;
         }
       }
 
       const data = await conversasApi.listar(params);
       setConversas(data);
+      await saveCachedConversations(filtroKey, data);
     } catch (error) {
       console.error('Erro ao carregar conversas:', error);
     } finally {
@@ -61,6 +73,42 @@ export default function ConversasScreen({ navigation }: Props) {
       setRefreshing(false);
     }
   }, []);
+
+  // Carrega agentes ativos para mostrar indicador nas conversas
+  const carregarAgentesAtivos = useCallback(async () => {
+    try {
+      const data = await agentesApi.listarAtivos();
+      const mapaAgentes = new Map<string, AgenteMissao>();
+      data.agentes.forEach((agente) => {
+        mapaAgentes.set(agente.jid, agente);
+      });
+      setAgentesAtivos(mapaAgentes);
+    } catch (error) {
+      console.error('Erro ao carregar agentes:', error);
+    }
+  }, []);
+
+  // Abre modal para ativar/editar agente
+  const abrirModalAgente = async (conversa: Conversa) => {
+    setConversaSelecionada(conversa);
+    // Verifica se ja tem agente ativo
+    const agente = agentesAtivos.get(conversa.jid) || null;
+    setAgenteAtivo(agente);
+    setModalAgenteVisivel(true);
+  };
+
+  // Callback quando agente é ativado/desativado
+  const handleAgenteAtivado = (agente: AgenteMissao | null) => {
+    if (conversaSelecionada) {
+      const novoMapa = new Map(agentesAtivos);
+      if (agente) {
+        novoMapa.set(conversaSelecionada.jid, agente);
+      } else {
+        novoMapa.delete(conversaSelecionada.jid);
+      }
+      setAgentesAtivos(novoMapa);
+    }
+  };
 
   // WebSocket para atualizações em tempo real
   const { isConnected } = useWebSocket({
@@ -105,17 +153,20 @@ export default function ConversasScreen({ navigation }: Props) {
 
   useEffect(() => {
     carregarConversas(filtroAtivo);
+    carregarAgentesAtivos();
 
-    // Polling como fallback (mais espaçado quando WebSocket está conectado)
-    const intervalo = isConnected ? 60000 : 10000; // 60s com WS, 10s sem
-    pollingRef.current = setInterval(() => {
-      carregarConversas(filtroAtivo);
-    }, intervalo);
+    // Polling somente como fallback quando WebSocket está offline
+    if (!isConnected) {
+      pollingRef.current = setInterval(() => {
+        carregarConversas(filtroAtivo);
+      }, 10000);
+    }
 
     // Listener para quando o app volta ao foreground
     const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
       if (appState.current.match(/inactive|background/) && nextAppState === 'active') {
         carregarConversas(filtroAtivo);
+        carregarAgentesAtivos();
       }
       appState.current = nextAppState;
     });
@@ -126,7 +177,20 @@ export default function ConversasScreen({ navigation }: Props) {
       }
       subscription.remove();
     };
-  }, [carregarConversas, filtroAtivo, isConnected]);
+  }, [carregarConversas, carregarAgentesAtivos, filtroAtivo, isConnected]);
+
+  useEffect(() => {
+    let isMounted = true;
+    loadCachedConversations(filtroAtivo).then((cached) => {
+      if (!isMounted || !cached) return;
+      setConversas(cached.data);
+      setLoading(false);
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [filtroAtivo]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -256,50 +320,75 @@ export default function ConversasScreen({ navigation }: Props) {
     </View>
   );
 
-  const renderConversa = ({ item }: { item: Conversa }) => (
-    <TouchableOpacity
-      style={styles.conversaItem}
-      onPress={() => navigation.navigate('Chat', { jid: item.jid, nome: item.nome })}
-      onLongPress={() => navigation.navigate('Perfil', { jid: item.jid, nome: item.nome })}
-      activeOpacity={0.7}
-    >
-      {/* Avatar - estilo WhatsApp com foto */}
-      <View style={styles.avatarContainer}>
-        {item.foto_url ? (
-          <Image
-            source={{ uri: item.foto_url }}
-            style={styles.avatarImage}
-          />
-        ) : (
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>
-              {item.nome?.charAt(0)?.toUpperCase() || '?'}
+  const renderConversa = ({ item }: { item: Conversa }) => {
+    const agenteConversa = agentesAtivos.get(item.jid);
+
+    return (
+      <TouchableOpacity
+        style={[
+          styles.conversaItem,
+          agenteConversa && styles.conversaComAgente,
+        ]}
+        onPress={() => navigation.navigate('Chat', { jid: item.jid, nome: item.nome })}
+        onLongPress={() => abrirModalAgente(item)}
+        activeOpacity={0.7}
+      >
+        {/* Avatar - estilo WhatsApp com foto */}
+        <View style={styles.avatarContainer}>
+          {item.foto_url ? (
+            <Image
+              source={{ uri: item.foto_url }}
+              style={styles.avatarImage}
+            />
+          ) : (
+            <View style={styles.avatar}>
+              <Text style={styles.avatarText}>
+                {item.nome?.charAt(0)?.toUpperCase() || '?'}
+              </Text>
+            </View>
+          )}
+          {/* Indicador de agente ativo no avatar */}
+          {agenteConversa && (
+            <View style={styles.agenteBadge}>
+              <Text style={styles.agenteBadgeIcone}>
+                {agenteConversa.tipo_info?.icone || '🎯'}
+              </Text>
+            </View>
+          )}
+        </View>
+
+        {/* Info */}
+        <View style={styles.conversaInfo}>
+          <View style={styles.conversaHeader}>
+            <Text style={styles.nome} numberOfLines={1}>
+              {item.nome || item.jid.split('@')[0]}
+            </Text>
+            <Text style={styles.hora}>
+              {formatarHora(item.ultima_mensagem?.data_hora || item.ultima_interacao)}
             </Text>
           </View>
-        )}
-      </View>
-
-      {/* Info */}
-      <View style={styles.conversaInfo}>
-        <View style={styles.conversaHeader}>
-          <Text style={styles.nome} numberOfLines={1}>
-            {item.nome || item.jid.split('@')[0]}
-          </Text>
-          <Text style={styles.hora}>
-            {formatarHora(item.ultima_mensagem?.data_hora || item.ultima_interacao)}
-          </Text>
+          <View style={styles.mensagemRow}>
+            <Text style={styles.ultimaMensagem} numberOfLines={1}>
+              {getUltimaMensagemTexto(item)}
+            </Text>
+            {/* Indicadores sutis à direita */}
+            {agenteConversa && (
+              <View style={[
+                styles.indicadorAgente,
+                { backgroundColor: agenteConversa.status === 'ativo' ? colors.secondary : '#FFA500' }
+              ]}>
+                <Text style={styles.indicadorAgenteTexto}>
+                  {agenteConversa.status === 'ativo' ? 'Ativo' : 'Pausado'}
+                </Text>
+              </View>
+            )}
+            {!agenteConversa && item.ia_automatica && <Text style={styles.indicadorIA}>✨</Text>}
+            {item.prioridade === 2 && <Text style={styles.indicadorVIP}>⭐</Text>}
+          </View>
         </View>
-        <View style={styles.mensagemRow}>
-          <Text style={styles.ultimaMensagem} numberOfLines={1}>
-            {getUltimaMensagemTexto(item)}
-          </Text>
-          {/* Indicadores sutis à direita */}
-          {item.ia_automatica && <Text style={styles.indicadorIA}>✨</Text>}
-          {item.prioridade === 2 && <Text style={styles.indicadorVIP}>⭐</Text>}
-        </View>
-      </View>
-    </TouchableOpacity>
-  );
+      </TouchableOpacity>
+    );
+  };
 
   if (loading && conversas.length === 0) {
     return (
@@ -312,6 +401,16 @@ export default function ConversasScreen({ navigation }: Props) {
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
+        {!isOnline && (
+          <View style={styles.statusBannerOffline}>
+            <Text style={styles.statusBannerText}>Sem conexão • mostrando cache</Text>
+          </View>
+        )}
+        {isOnline && !isConnected && (
+          <View style={styles.statusBannerWarning}>
+            <Text style={styles.statusBannerText}>Tempo real pausado • atualizando em segundo plano</Text>
+          </View>
+        )}
         {renderFiltros()}
         <FlatList
           data={conversas}
@@ -335,6 +434,19 @@ export default function ConversasScreen({ navigation }: Props) {
               </Text>
             </View>
           }
+        />
+
+        {/* Modal de ativar agente */}
+        <AtivarAgenteModal
+          visible={modalAgenteVisivel}
+          onClose={() => {
+            setModalAgenteVisivel(false);
+            setConversaSelecionada(null);
+          }}
+          jid={conversaSelecionada?.jid || ''}
+          nomeContato={conversaSelecionada?.nome || ''}
+          agenteAtivo={agenteAtivo}
+          onAgenteAtivado={handleAgenteAtivado}
         />
       </View>
     </SafeAreaView>
@@ -495,5 +607,56 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: fontSize.md,
     color: colors.textSecondary,
+  },
+  statusBannerOffline: {
+    backgroundColor: '#FFE8E8',
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F5C2C2',
+  },
+  statusBannerWarning: {
+    backgroundColor: '#FFF3D6',
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F2D199',
+  },
+  statusBannerText: {
+    color: colors.textSecondary,
+    fontSize: fontSize.xs,
+    textAlign: 'center',
+  },
+  // Estilos para agentes
+  conversaComAgente: {
+    borderLeftWidth: 3,
+    borderLeftColor: colors.iaAccent,
+  },
+  agenteBadge: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    backgroundColor: colors.iaAccentLight,
+    borderRadius: 10,
+    width: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: colors.background,
+  },
+  agenteBadgeIcone: {
+    fontSize: 10,
+  },
+  indicadorAgente: {
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 1,
+    borderRadius: borderRadius.sm,
+    marginLeft: spacing.xs,
+  },
+  indicadorAgenteTexto: {
+    fontSize: fontSize.xs,
+    color: colors.textLight,
+    fontWeight: '600',
   },
 });

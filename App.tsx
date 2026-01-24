@@ -9,6 +9,7 @@ import ConversasScreen from './src/screens/ConversasScreen';
 import ChatScreen from './src/screens/ChatScreen';
 import IAScreen from './src/screens/IAScreen';
 import PerfilScreen from './src/screens/PerfilScreen';
+import MissoesScreen from './src/screens/MissoesScreen';
 import { colors } from './src/theme/whatsapp';
 
 const Stack = createNativeStackNavigator();
@@ -63,12 +64,18 @@ function TabNavigator() {
         }}
       />
       <Tab.Screen
-        name="Status"
-        component={StatusScreen}
+        name="Missoes"
+        component={MissoesScreen}
         options={{
+          title: 'Missoes',
+          tabBarLabel: 'Missoes',
           tabBarIcon: ({ color, size }) => (
-            <Text style={{ fontSize: size, color }}>◉</Text>
+            <Text style={{ fontSize: size, color }}>🎯</Text>
           ),
+          headerStyle: {
+            backgroundColor: colors.iaAccent,
+          },
+          tabBarActiveTintColor: colors.iaAccent,
         }}
       />
       <Tab.Screen
