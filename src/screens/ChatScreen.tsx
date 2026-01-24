@@ -12,10 +12,10 @@ import {
   Alert,
   useWindowDimensions,
   Keyboard,
-  InputAccessoryView,
+  ScrollView,
 } from 'react-native';
 import { colors, spacing, fontSize, borderRadius } from '../theme/whatsapp';
-import { conversasApi, Mensagem, SugestaoResposta } from '../services/api';
+import { conversasApi, Mensagem, SugestaoResposta, OpcaoArquetipo } from '../services/api';
 
 const INPUT_ACCESSORY_ID = 'chatInputAccessory';
 
@@ -32,6 +32,7 @@ export default function ChatScreen({ route, navigation }: Props) {
   const [enviando, setEnviando] = useState(false);
   const [sugerindo, setSugerindo] = useState(false);
   const [sugestao, setSugestao] = useState<SugestaoResposta | null>(null);
+  const [opcaoSelecionada, setOpcaoSelecionada] = useState<number>(0);
   const flatListRef = useRef<FlatList>(null);
   const { width: screenWidth } = useWindowDimensions();
 
@@ -135,13 +136,13 @@ export default function ChatScreen({ route, navigation }: Props) {
     }
   };
 
-  // Envia todas as mensagens sugeridas em sequência (como humano faria)
-  const enviarTodasSugestoes = async () => {
-    if (!sugestao || sugestao.mensagens.length === 0) return;
+  // Envia mensagens em sequência (como humano faria)
+  const enviarMensagensEmSequencia = async (mensagensParaEnviar: string[]) => {
+    if (!mensagensParaEnviar || mensagensParaEnviar.length === 0) return;
 
     setEnviando(true);
     try {
-      for (const msg of sugestao.mensagens) {
+      for (const msg of mensagensParaEnviar) {
         await conversasApi.enviar(jid, msg);
         // Adiciona mensagem localmente
         const novaMensagem: Mensagem = {
@@ -159,12 +160,19 @@ export default function ChatScreen({ route, navigation }: Props) {
         await new Promise(resolve => setTimeout(resolve, 300));
       }
       setSugestao(null);
+      setOpcaoSelecionada(0);
       setTimeout(() => flatListRef.current?.scrollToEnd(), 100);
     } catch (error) {
       Alert.alert('Erro', 'Não foi possível enviar as mensagens');
     } finally {
       setEnviando(false);
     }
+  };
+
+  // Envia todas as mensagens sugeridas em sequência (formato simples)
+  const enviarTodasSugestoes = async () => {
+    if (!sugestao || sugestao.mensagens.length === 0) return;
+    await enviarMensagensEmSequencia(sugestao.mensagens);
   };
 
   // Remove uma mensagem específica da sugestão
@@ -278,47 +286,140 @@ export default function ChatScreen({ route, navigation }: Props) {
         keyboardDismissMode="interactive"
       />
 
-      {/* Sugestão da IA - múltiplas mensagens como WhatsApp */}
-      {sugestao && sugestao.mensagens.length > 0 && (
+      {/* Sugestão da IA - Arquetipos psicológicos */}
+      {sugestao && (
         <View style={styles.sugestaoContainer}>
-          <Text style={styles.sugestaoLabel}>
-            Sugestão ({sugestao.mensagens.length} {sugestao.mensagens.length === 1 ? 'msg' : 'msgs'}):
-          </Text>
-
-          {/* Preview das mensagens como bolhas */}
-          <View style={styles.sugestaoMensagens}>
-            {sugestao.mensagens.map((msg, index) => (
-              <View key={index} style={styles.sugestaoMsgItem}>
-                <View style={styles.sugestaoMsgBalao}>
-                  <Text style={styles.sugestaoMsgTexto}>{msg}</Text>
+          {/* Header com análise e emoção detectada */}
+          {sugestao.formato === 'arquetipos' && (sugestao.analise || sugestao.emocao) && (
+            <View style={styles.analiseHeader}>
+              {sugestao.emocao && (
+                <View style={styles.emocaoBadge}>
+                  <Text style={styles.emocaoTexto}>
+                    {sugestao.emocao === 'feliz' ? '😊' :
+                     sugestao.emocao === 'triste' ? '😢' :
+                     sugestao.emocao === 'ansioso' ? '😰' :
+                     sugestao.emocao === 'irritado' ? '😤' :
+                     sugestao.emocao === 'neutro' ? '😐' : '🤔'} {sugestao.emocao}
+                  </Text>
                 </View>
+              )}
+              {sugestao.analise && (
+                <Text style={styles.analiseTexto} numberOfLines={2}>
+                  {sugestao.analise}
+                </Text>
+              )}
+            </View>
+          )}
+
+          {/* Opções de arquétipos */}
+          {sugestao.formato === 'arquetipos' && sugestao.opcoes && sugestao.opcoes.length > 0 ? (
+            <>
+              <Text style={styles.sugestaoLabel}>Escolha o tom da resposta:</Text>
+              <View style={styles.arquetiposGrid}>
+                {sugestao.opcoes.map((opcao, index) => (
+                  <TouchableOpacity
+                    key={opcao.tipo}
+                    style={[
+                      styles.arquetipoCard,
+                      opcaoSelecionada === index && styles.arquetipoCardSelecionado
+                    ]}
+                    onPress={() => setOpcaoSelecionada(index)}
+                  >
+                    <Text style={styles.arquetipoIcone}>{opcao.icone}</Text>
+                    <Text style={[
+                      styles.arquetipoNome,
+                      opcaoSelecionada === index && styles.arquetipoNomeSelecionado
+                    ]}>
+                      {opcao.nome}
+                    </Text>
+                    <Text style={styles.arquetipoDescricao} numberOfLines={2}>
+                      {opcao.descricao}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* Preview das mensagens do arquétipo selecionado */}
+              {sugestao.opcoes[opcaoSelecionada]?.mensagens && (
+                <View style={styles.sugestaoMensagens}>
+                  <Text style={styles.previewLabel}>
+                    Preview ({sugestao.opcoes[opcaoSelecionada].mensagens.length} msgs):
+                  </Text>
+                  <ScrollView style={styles.previewScroll} nestedScrollEnabled>
+                    {sugestao.opcoes[opcaoSelecionada].mensagens.map((msg, index) => (
+                      <View key={index} style={styles.sugestaoMsgItem}>
+                        <View style={styles.sugestaoMsgBalao}>
+                          <Text style={styles.sugestaoMsgTexto}>{msg}</Text>
+                        </View>
+                      </View>
+                    ))}
+                  </ScrollView>
+                </View>
+              )}
+
+              <View style={styles.sugestaoBotoes}>
                 <TouchableOpacity
-                  style={styles.sugestaoMsgRemover}
-                  onPress={() => removerSugestao(index)}
+                  style={[styles.sugestaoBotao, styles.sugestaoBotaoEnviar]}
+                  onPress={() => {
+                    const mensagensParaEnviar = sugestao.opcoes[opcaoSelecionada]?.mensagens || [];
+                    if (mensagensParaEnviar.length > 0) {
+                      enviarMensagensEmSequencia(mensagensParaEnviar);
+                    }
+                  }}
+                  disabled={enviando}
                 >
-                  <Text style={styles.sugestaoMsgRemoverTexto}>x</Text>
+                  <Text style={styles.sugestaoBotaoTexto}>
+                    {enviando ? 'Enviando...' : `Enviar ${sugestao.opcoes[opcaoSelecionada]?.nome || ''}`}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.sugestaoBotao, styles.sugestaoBotaoDescartar]}
+                  onPress={() => { setSugestao(null); setOpcaoSelecionada(0); }}
+                >
+                  <Text style={styles.sugestaoBotaoTextoDescartar}>✕</Text>
                 </TouchableOpacity>
               </View>
-            ))}
-          </View>
-
-          <View style={styles.sugestaoBotoes}>
-            <TouchableOpacity
-              style={[styles.sugestaoBotao, styles.sugestaoBotaoEnviar]}
-              onPress={enviarTodasSugestoes}
-              disabled={enviando}
-            >
-              <Text style={styles.sugestaoBotaoTexto}>
-                {enviando ? 'Enviando...' : 'Enviar todas'}
+            </>
+          ) : (
+            /* Fallback para formato simples */
+            <>
+              <Text style={styles.sugestaoLabel}>
+                Sugestão ({sugestao.mensagens.length} {sugestao.mensagens.length === 1 ? 'msg' : 'msgs'}):
               </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.sugestaoBotao, styles.sugestaoBotaoDescartar]}
-              onPress={() => setSugestao(null)}
-            >
-              <Text style={styles.sugestaoBotaoTextoDescartar}>Descartar</Text>
-            </TouchableOpacity>
-          </View>
+              <View style={styles.sugestaoMensagens}>
+                {sugestao.mensagens.map((msg, index) => (
+                  <View key={index} style={styles.sugestaoMsgItem}>
+                    <View style={styles.sugestaoMsgBalao}>
+                      <Text style={styles.sugestaoMsgTexto}>{msg}</Text>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.sugestaoMsgRemover}
+                      onPress={() => removerSugestao(index)}
+                    >
+                      <Text style={styles.sugestaoMsgRemoverTexto}>✕</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+              <View style={styles.sugestaoBotoes}>
+                <TouchableOpacity
+                  style={[styles.sugestaoBotao, styles.sugestaoBotaoEnviar]}
+                  onPress={enviarTodasSugestoes}
+                  disabled={enviando}
+                >
+                  <Text style={styles.sugestaoBotaoTexto}>
+                    {enviando ? 'Enviando...' : 'Enviar'}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.sugestaoBotao, styles.sugestaoBotaoDescartar]}
+                  onPress={() => setSugestao(null)}
+                >
+                  <Text style={styles.sugestaoBotaoTextoDescartar}>✕</Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
         </View>
       )}
 
@@ -454,12 +555,84 @@ const styles = StyleSheet.create({
     borderRadius: borderRadius.md,
     borderLeftWidth: 3,
     borderLeftColor: colors.iaAccent,
+    maxHeight: 400,
+  },
+  analiseHeader: {
+    marginBottom: spacing.sm,
+    paddingBottom: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(138, 43, 226, 0.2)',
+  },
+  emocaoBadge: {
+    backgroundColor: 'rgba(138, 43, 226, 0.15)',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: borderRadius.sm,
+    alignSelf: 'flex-start',
+    marginBottom: spacing.xs,
+  },
+  emocaoTexto: {
+    fontSize: fontSize.sm,
+    color: colors.iaAccent,
+    fontWeight: '500',
+    textTransform: 'capitalize',
+  },
+  analiseTexto: {
+    fontSize: fontSize.sm,
+    color: colors.textSecondary,
+    fontStyle: 'italic',
   },
   sugestaoLabel: {
-    fontSize: fontSize.xs,
+    fontSize: fontSize.sm,
     color: colors.iaAccent,
     fontWeight: '600',
+    marginBottom: spacing.sm,
+  },
+  arquetiposGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  arquetipoCard: {
+    width: '48%',
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: borderRadius.md,
+    padding: spacing.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(138, 43, 226, 0.3)',
+    alignItems: 'center',
+  },
+  arquetipoCardSelecionado: {
+    backgroundColor: 'rgba(138, 43, 226, 0.2)',
+    borderColor: colors.iaAccent,
+    borderWidth: 2,
+  },
+  arquetipoIcone: {
+    fontSize: 24,
     marginBottom: spacing.xs,
+  },
+  arquetipoNome: {
+    fontSize: fontSize.sm,
+    fontWeight: '600',
+    color: colors.textPrimary,
+    marginBottom: 2,
+  },
+  arquetipoNomeSelecionado: {
+    color: colors.iaAccent,
+  },
+  arquetipoDescricao: {
+    fontSize: fontSize.xs,
+    color: colors.textSecondary,
+    textAlign: 'center',
+  },
+  previewLabel: {
+    fontSize: fontSize.xs,
+    color: colors.textSecondary,
+    marginBottom: spacing.xs,
+  },
+  previewScroll: {
+    maxHeight: 100,
   },
   sugestaoTexto: {
     fontSize: fontSize.md,
@@ -468,6 +641,7 @@ const styles = StyleSheet.create({
   },
   sugestaoMensagens: {
     marginBottom: spacing.sm,
+    maxHeight: 150,
   },
   sugestaoMsgItem: {
     flexDirection: 'row',
