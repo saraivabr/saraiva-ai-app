@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -12,6 +12,9 @@ import {
 } from 'react-native';
 import { colors, spacing, fontSize, borderRadius } from '../theme/whatsapp';
 import { perfilApi } from '../services/api';
+import { useWebSocket } from '../hooks/useWebSocket';
+import { loadCachedPerfil, saveCachedPerfil } from '../services/cache';
+import { useConnectivity } from '../hooks/useConnectivity';
 
 interface Props {
   route: any;
@@ -50,6 +53,7 @@ export default function PerfilScreen({ route, navigation }: Props) {
   const [prioridade, setPrioridade] = useState(0);
   const [notas, setNotas] = useState('');
   const [perfilResumo, setPerfilResumo] = useState<string | null>(null);
+  const { isOnline } = useConnectivity();
 
   useEffect(() => {
     navigation.setOptions({
@@ -57,10 +61,10 @@ export default function PerfilScreen({ route, navigation }: Props) {
       headerStyle: { backgroundColor: colors.primary },
       headerTintColor: colors.textLight,
     });
-    carregarPerfil();
-  }, []);
+  }, [jid, navigation, nome]);
 
-  const carregarPerfil = async () => {
+  const carregarPerfil = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const perfil = await perfilApi.get(jid);
       setCategoria(perfil.categoria || 'pessoal');
@@ -68,12 +72,55 @@ export default function PerfilScreen({ route, navigation }: Props) {
       setPrioridade(perfil.prioridade || 0);
       setNotas(perfil.notas_ia || '');
       setPerfilResumo(perfil.perfil_resumo);
+      await saveCachedPerfil(jid, perfil);
     } catch (error) {
       console.error('Erro ao carregar perfil:', error);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
-  };
+  }, [jid]);
+
+  useEffect(() => {
+    let isMounted = true;
+    loadCachedPerfil(jid).then((cached) => {
+      if (!isMounted) return;
+      if (cached) {
+        setCategoria(cached.data.categoria || 'pessoal');
+        setArquetipo(cached.data.arquetipo || 'casual');
+        setPrioridade(cached.data.prioridade || 0);
+        setNotas(cached.data.notas_ia || '');
+        setPerfilResumo(cached.data.perfil_resumo);
+        setLoading(false);
+        carregarPerfil(true);
+      } else {
+        carregarPerfil(false);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [carregarPerfil, jid]);
+
+  const { isConnected, watchConversation, unwatchConversation } = useWebSocket({
+    onConversationUpdate: useCallback((mensagemJid: string) => {
+      if (mensagemJid !== jid) return;
+      carregarPerfil(true);
+    }, [carregarPerfil, jid]),
+  });
+
+  useEffect(() => {
+    if (isConnected) {
+      watchConversation(jid);
+      carregarPerfil(true);
+    }
+  }, [carregarPerfil, isConnected, jid, watchConversation]);
+
+  useEffect(() => {
+    return () => {
+      unwatchConversation(jid);
+    };
+  }, [jid, unwatchConversation]);
 
   const salvar = async () => {
     setSaving(true);
@@ -122,6 +169,16 @@ export default function PerfilScreen({ route, navigation }: Props) {
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      {!isOnline && (
+        <View style={styles.statusBannerOffline}>
+          <Text style={styles.statusBannerText}>Sem conexão • mostrando cache</Text>
+        </View>
+      )}
+      {isOnline && !isConnected && (
+        <View style={styles.statusBannerWarning}>
+          <Text style={styles.statusBannerText}>Tempo real pausado • tentando reconectar</Text>
+        </View>
+      )}
       <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
         {/* Avatar e nome */}
       <View style={styles.header}>
@@ -417,5 +474,24 @@ const styles = StyleSheet.create({
     color: colors.textLight,
     fontSize: fontSize.md,
     fontWeight: '600',
+  },
+  statusBannerOffline: {
+    backgroundColor: '#FFE8E8',
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F5C2C2',
+  },
+  statusBannerWarning: {
+    backgroundColor: '#FFF3D6',
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F2D199',
+  },
+  statusBannerText: {
+    color: colors.textSecondary,
+    fontSize: fontSize.xs,
+    textAlign: 'center',
   },
 });
