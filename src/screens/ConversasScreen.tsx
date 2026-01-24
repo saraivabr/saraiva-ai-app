@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { colors, spacing, fontSize, borderRadius } from '../theme/whatsapp';
 import { conversasApi, Conversa } from '../services/api';
+import { useWebSocket } from '../hooks/useWebSocket';
 
 interface Props {
   navigation: any;
@@ -59,21 +60,59 @@ export default function ConversasScreen({ navigation }: Props) {
     }
   }, []);
 
+  // WebSocket para atualizações em tempo real
+  const { isConnected } = useWebSocket({
+    onNewMessage: useCallback((jid: string, mensagem: any) => {
+      // Atualiza a conversa com a nova mensagem
+      setConversas(prev => {
+        const index = prev.findIndex(c => c.jid === jid);
+        if (index === -1) {
+          // Nova conversa - recarrega lista completa
+          carregarConversas(filtroAtivo);
+          return prev;
+        }
+
+        // Atualiza a conversa existente e move para o topo
+        const updated = [...prev];
+        const conversa = { ...updated[index] };
+        conversa.ultima_mensagem = {
+          texto: mensagem.conteudo,
+          tipo: mensagem.tipo,
+          data_hora: mensagem.data_hora,
+          direcao: mensagem.direcao,
+        };
+        conversa.ultima_interacao = mensagem.data_hora;
+
+        // Remove da posição atual e adiciona no topo
+        updated.splice(index, 1);
+        updated.unshift(conversa);
+
+        return updated;
+      });
+    }, [carregarConversas, filtroAtivo]),
+    onConnected: useCallback(() => {
+      console.log('WebSocket conectado - tempo real ativo');
+    }, []),
+    onDisconnected: useCallback(() => {
+      console.log('WebSocket desconectado - usando fallback polling');
+    }, []),
+  });
+
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
   const appState = useRef(AppState.currentState);
 
   useEffect(() => {
     carregarConversas(filtroAtivo);
 
-    // Polling a cada 10 segundos para atualizar lista
+    // Polling como fallback (mais espaçado quando WebSocket está conectado)
+    const intervalo = isConnected ? 60000 : 10000; // 60s com WS, 10s sem
     pollingRef.current = setInterval(() => {
       carregarConversas(filtroAtivo);
-    }, 10000);
+    }, intervalo);
 
     // Listener para quando o app volta ao foreground
     const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
       if (appState.current.match(/inactive|background/) && nextAppState === 'active') {
-        // App voltou ao foreground - atualiza lista
         carregarConversas(filtroAtivo);
       }
       appState.current = nextAppState;
@@ -85,7 +124,7 @@ export default function ConversasScreen({ navigation }: Props) {
       }
       subscription.remove();
     };
-  }, [carregarConversas, filtroAtivo]);
+  }, [carregarConversas, filtroAtivo, isConnected]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
