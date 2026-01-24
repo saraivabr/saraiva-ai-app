@@ -1,20 +1,128 @@
+import React from 'react';
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View } from 'react-native';
+import { NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { Text, View } from 'react-native';
 
-export default function App() {
+import ConversasScreen from './src/screens/ConversasScreen';
+import ChatScreen from './src/screens/ChatScreen';
+import IAScreen from './src/screens/IAScreen';
+import { colors } from './src/theme/whatsapp';
+
+const Stack = createNativeStackNavigator();
+const Tab = createBottomTabNavigator();
+
+// Placeholder screens
+function StatusScreen() {
   return (
-    <View style={styles.container}>
-      <Text>Open up App.tsx to start working on your app!</Text>
-      <StatusBar style="auto" />
+    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.background }}>
+      <Text style={{ color: colors.textSecondary }}>Status (em breve)</Text>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});
+function ChamadasScreen() {
+  return (
+    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.background }}>
+      <Text style={{ color: colors.textSecondary }}>Chamadas (em breve)</Text>
+    </View>
+  );
+}
+
+// Tab Navigator
+function TabNavigator() {
+  return (
+    <Tab.Navigator
+      screenOptions={{
+        tabBarActiveTintColor: colors.primary,
+        tabBarInactiveTintColor: colors.textSecondary,
+        tabBarStyle: {
+          backgroundColor: colors.background,
+          borderTopColor: colors.border,
+        },
+        headerStyle: {
+          backgroundColor: colors.primary,
+        },
+        headerTintColor: colors.textLight,
+        headerTitleStyle: {
+          fontWeight: '600',
+        },
+      }}
+    >
+      <Tab.Screen
+        name="Conversas"
+        component={ConversasScreen}
+        options={{
+          title: 'Saraiva.AI',
+          tabBarLabel: 'Conversas',
+          tabBarIcon: ({ color, size }) => (
+            <Text style={{ fontSize: size, color }}>💬</Text>
+          ),
+        }}
+      />
+      <Tab.Screen
+        name="Status"
+        component={StatusScreen}
+        options={{
+          tabBarIcon: ({ color, size }) => (
+            <Text style={{ fontSize: size, color }}>◉</Text>
+          ),
+        }}
+      />
+      <Tab.Screen
+        name="Chamadas"
+        component={ChamadasScreen}
+        options={{
+          tabBarIcon: ({ color, size }) => (
+            <Text style={{ fontSize: size, color }}>📞</Text>
+          ),
+        }}
+      />
+      <Tab.Screen
+        name="IA"
+        component={IAScreen}
+        options={{
+          headerShown: false,
+          tabBarIcon: ({ color, size }) => (
+            <Text style={{ fontSize: size, color }}>✨</Text>
+          ),
+          tabBarActiveTintColor: colors.iaAccent,
+        }}
+      />
+    </Tab.Navigator>
+  );
+}
+
+// Main Stack Navigator
+export default function App() {
+  return (
+    <NavigationContainer>
+      <StatusBar style="light" />
+      <Stack.Navigator
+        screenOptions={{
+          headerStyle: {
+            backgroundColor: colors.primary,
+          },
+          headerTintColor: colors.textLight,
+          headerTitleStyle: {
+            fontWeight: '600',
+          },
+        }}
+      >
+        <Stack.Screen
+          name="Home"
+          component={TabNavigator}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="Chat"
+          component={ChatScreen}
+          options={({ route }: any) => ({
+            title: route.params?.nome || 'Chat',
+          })}
+        />
+      </Stack.Navigator>
+    </NavigationContainer>
+  );
+}
