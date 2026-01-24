@@ -23,10 +23,10 @@ interface Mensagem {
 }
 
 const PROMPTS_RAPIDOS = [
+  'Manda oi pro João',
+  'O que o Pedro disse?',
+  'Quem falou de reunião?',
   'Resumo do dia',
-  'Tarefas pendentes',
-  'Quem não respondi?',
-  'O que perdi hoje?',
 ];
 
 export default function IAScreen() {
@@ -34,7 +34,7 @@ export default function IAScreen() {
   const [mensagens, setMensagens] = useState<Mensagem[]>([
     {
       id: '1',
-      texto: 'Olá! Sou o Saraiva.AI, seu assistente pessoal. Posso ajudar você a entender suas conversas, encontrar informações e muito mais. O que você gostaria de saber?',
+      texto: 'Olá! Sou o Saraiva.AI, seu assistente pessoal.\n\nPosso fazer várias coisas por você:\n\n📤 Enviar mensagens: "Manda oi pro João"\n📖 Ler conversas: "O que o Pedro disse?"\n🔍 Buscar: "Quem falou de reunião?"\n📝 Resumir: "Resume conversa com Maria"\n\nO que você precisa?',
       remetente: 'ia',
       hora: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
     },

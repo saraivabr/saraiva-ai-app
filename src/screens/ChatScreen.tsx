@@ -10,11 +10,14 @@ import {
   KeyboardAvoidingView,
   Platform,
   Alert,
-  SafeAreaView,
   useWindowDimensions,
+  Keyboard,
+  InputAccessoryView,
 } from 'react-native';
 import { colors, spacing, fontSize, borderRadius } from '../theme/whatsapp';
 import { conversasApi, Mensagem, SugestaoResposta } from '../services/api';
+
+const INPUT_ACCESSORY_ID = 'chatInputAccessory';
 
 interface Props {
   route: any;
@@ -32,6 +35,10 @@ export default function ChatScreen({ route, navigation }: Props) {
   const flatListRef = useRef<FlatList>(null);
   const { width: screenWidth } = useWindowDimensions();
 
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const pollingRef = useRef<NodeJS.Timeout | null>(null);
+  const lastMessageIdRef = useRef<string | null>(null);
+
   useEffect(() => {
     navigation.setOptions({
       title: nome || jid.split('@')[0],
@@ -40,19 +47,64 @@ export default function ChatScreen({ route, navigation }: Props) {
     });
   }, [navigation, nome, jid]);
 
-  const carregarMensagens = useCallback(async () => {
+  // Listener do teclado para ajustar a view
+  useEffect(() => {
+    const showListener = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      (e) => {
+        setKeyboardHeight(e.endCoordinates.height);
+        setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+      }
+    );
+    const hideListener = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+      () => setKeyboardHeight(0)
+    );
+
+    return () => {
+      showListener.remove();
+      hideListener.remove();
+    };
+  }, []);
+
+  const carregarMensagens = useCallback(async (silent = false) => {
     try {
       const data = await conversasApi.mensagens(jid);
-      setMensagens(data.mensagens);
+
+      // Verifica se tem mensagens novas
+      if (data.mensagens.length > 0) {
+        const ultimaMsg = data.mensagens[data.mensagens.length - 1];
+        if (lastMessageIdRef.current !== ultimaMsg.message_id) {
+          lastMessageIdRef.current = ultimaMsg.message_id;
+          setMensagens(data.mensagens);
+          if (!silent) {
+            setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+          }
+        }
+      } else {
+        setMensagens(data.mensagens);
+      }
     } catch (error) {
       console.error('Erro ao carregar mensagens:', error);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [jid]);
 
+  // Carrega inicial + polling para auto-refresh
   useEffect(() => {
     carregarMensagens();
+
+    // Polling a cada 5 segundos para novas mensagens
+    pollingRef.current = setInterval(() => {
+      carregarMensagens(true);
+    }, 5000);
+
+    return () => {
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+      }
+    };
   }, [carregarMensagens]);
 
   const enviarMensagem = async (mensagemTexto?: string) => {
@@ -205,8 +257,8 @@ export default function ChatScreen({ route, navigation }: Props) {
   return (
     <KeyboardAvoidingView
       style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={90}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
     >
       {/* Lista de mensagens */}
       <FlatList
@@ -214,10 +266,16 @@ export default function ChatScreen({ route, navigation }: Props) {
         data={mensagens}
         keyExtractor={(item) => item.message_id || String(item.id)}
         renderItem={renderMensagem}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[
+          styles.listContent,
+          { paddingBottom: Platform.OS === 'android' ? keyboardHeight : spacing.md }
+        ]}
         style={styles.flatList}
-        onContentSizeChange={() => flatListRef.current?.scrollToEnd()}
+        onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+        onLayout={() => flatListRef.current?.scrollToEnd({ animated: false })}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
       />
 
       {/* Sugestão da IA - múltiplas mensagens como WhatsApp */}

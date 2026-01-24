@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,6 +10,8 @@ import {
   ScrollView,
   SafeAreaView,
   useWindowDimensions,
+  AppState,
+  AppStateStatus,
 } from 'react-native';
 import { colors, spacing, fontSize, borderRadius } from '../theme/whatsapp';
 import { conversasApi, Conversa } from '../services/api';
@@ -66,8 +68,32 @@ export default function ConversasScreen({ navigation }: Props) {
     }
   }, []);
 
+  const pollingRef = useRef<NodeJS.Timeout | null>(null);
+  const appState = useRef(AppState.currentState);
+
   useEffect(() => {
     carregarConversas(filtroAtivo);
+
+    // Polling a cada 10 segundos para atualizar lista
+    pollingRef.current = setInterval(() => {
+      carregarConversas(filtroAtivo);
+    }, 10000);
+
+    // Listener para quando o app volta ao foreground
+    const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
+      if (appState.current.match(/inactive|background/) && nextAppState === 'active') {
+        // App voltou ao foreground - atualiza lista
+        carregarConversas(filtroAtivo);
+      }
+      appState.current = nextAppState;
+    });
+
+    return () => {
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+      }
+      subscription.remove();
+    };
   }, [carregarConversas, filtroAtivo]);
 
   const onRefresh = useCallback(() => {
