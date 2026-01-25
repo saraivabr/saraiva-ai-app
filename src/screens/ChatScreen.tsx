@@ -14,6 +14,7 @@ import {
   Keyboard,
   ScrollView,
 } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { colors, spacing, fontSize, borderRadius } from '../theme/whatsapp';
 import { conversasApi, agentesApi, Mensagem, SugestaoResposta, OpcaoArquetipo, AgenteMissao, SugestaoAgente } from '../services/api';
 import { useWebSocket } from '../hooks/useWebSocket';
@@ -275,6 +276,7 @@ export default function ChatScreen({ route, navigation }: Props) {
     const textoEnviar = mensagemTexto || texto;
     if (!textoEnviar.trim()) return;
 
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setEnviando(true);
     try {
       await conversasApi.enviar(jid, textoEnviar);
@@ -297,6 +299,7 @@ export default function ChatScreen({ route, navigation }: Props) {
         setTimeout(() => scrollToBottom(true), 100);
       }
     } catch (error) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert('Erro', 'Não foi possível enviar a mensagem');
     } finally {
       setEnviando(false);
@@ -307,6 +310,7 @@ export default function ChatScreen({ route, navigation }: Props) {
   const enviarMensagensEmSequencia = async (mensagensParaEnviar: string[]) => {
     if (!mensagensParaEnviar || mensagensParaEnviar.length === 0) return;
 
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setEnviando(true);
     try {
       for (const msg of mensagensParaEnviar) {
@@ -334,6 +338,7 @@ export default function ChatScreen({ route, navigation }: Props) {
         setTimeout(() => scrollToBottom(true), 100);
       }
     } catch (error) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert('Erro', 'Não foi possível enviar as mensagens');
     } finally {
       setEnviando(false);
@@ -368,6 +373,7 @@ export default function ChatScreen({ route, navigation }: Props) {
   };
 
   const solicitarSugestao = async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     // Se tem agente ativo, usa sugestão do agente
     if (agente && agente.status === 'ativo') {
       setGerandoSugestaoAgente(true);
@@ -579,7 +585,10 @@ export default function ChatScreen({ route, navigation }: Props) {
                       styles.arquetipoCard,
                       opcaoSelecionada === index && styles.arquetipoCardSelecionado
                     ]}
-                    onPress={() => setOpcaoSelecionada(index)}
+                    onPress={() => {
+                      Haptics.selectionAsync();
+                      setOpcaoSelecionada(index);
+                    }}
                   >
                     <Text style={styles.arquetipoIcone}>{opcao.icone}</Text>
                     <Text style={[
