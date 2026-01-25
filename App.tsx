@@ -10,6 +10,7 @@ import ChatScreen from './src/screens/ChatScreen';
 import IAScreen from './src/screens/IAScreen';
 import PerfilScreen from './src/screens/PerfilScreen';
 import MissoesScreen from './src/screens/MissoesScreen';
+import { ComBadgeNovo } from './src/components/BadgeNovo';
 import { colors } from './src/theme/whatsapp';
 
 const Stack = createNativeStackNavigator();
@@ -70,7 +71,9 @@ function TabNavigator() {
           title: 'Missoes',
           tabBarLabel: 'Missoes',
           tabBarIcon: ({ color, size }) => (
-            <Text style={{ fontSize: size, color }}>🎯</Text>
+            <ComBadgeNovo featureId="aba_missoes" posicao="topRight" tamanho="pequeno">
+              <Text style={{ fontSize: size, color }}>🎯</Text>
+            </ComBadgeNovo>
           ),
           headerStyle: {
             backgroundColor: colors.iaAccent,
@@ -93,7 +96,9 @@ function TabNavigator() {
         options={{
           headerShown: false,
           tabBarIcon: ({ color, size }) => (
-            <Text style={{ fontSize: size, color }}>✨</Text>
+            <ComBadgeNovo featureId="aba_ia" posicao="topRight" tamanho="pequeno">
+              <Text style={{ fontSize: size, color }}>✨</Text>
+            </ComBadgeNovo>
           ),
           tabBarActiveTintColor: colors.iaAccent,
         }}

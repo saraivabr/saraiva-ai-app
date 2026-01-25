@@ -64,6 +64,7 @@ export interface SugestaoResposta {
   formato: 'arquetipos' | 'simples';
   analise?: string;
   emocao?: string;
+  confianca?: number;
   opcoes: OpcaoArquetipo[];
   mensagens: string[];
   texto_unico: string;

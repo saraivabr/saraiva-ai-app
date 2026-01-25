@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { colors, spacing, fontSize, borderRadius } from '../theme/whatsapp';
 import { iaApi } from '../services/api';
+import { useFeatureUsada } from '../components/TooltipOnboarding';
 
 interface Mensagem {
   id: string;
@@ -31,6 +32,15 @@ const PROMPTS_RAPIDOS = [
 
 export default function IAScreen() {
   const { width: screenWidth } = useWindowDimensions();
+  const { usada: abaUsada, marcarUsada: marcarAbaUsada } = useFeatureUsada('aba_ia');
+
+  // Marca a aba como usada na primeira visita
+  useEffect(() => {
+    if (!abaUsada) {
+      marcarAbaUsada();
+    }
+  }, [abaUsada, marcarAbaUsada]);
+
   const [mensagens, setMensagens] = useState<Mensagem[]>([
     {
       id: '1',

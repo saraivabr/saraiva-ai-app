@@ -22,7 +22,7 @@ import { loadCachedMensagens, saveCachedMensagens } from '../services/cache';
 import { useConnectivity } from '../hooks/useConnectivity';
 import AtivarAgenteModal from '../components/AtivarAgenteModal';
 import AgenteBadge from '../components/AgenteBadge';
-import TooltipOnboarding from '../components/TooltipOnboarding';
+import TooltipOnboarding, { PulsingHighlight, useFeatureUsada } from '../components/TooltipOnboarding';
 
 const INPUT_ACCESSORY_ID = 'chatInputAccessory';
 const PAGE_SIZE = 50;
@@ -60,6 +60,9 @@ export default function ChatScreen({ route, navigation }: Props) {
   const [modalAgenteVisivel, setModalAgenteVisivel] = useState(false);
   const [sugestaoAgente, setSugestaoAgente] = useState<SugestaoAgente | null>(null);
   const [gerandoSugestaoAgente, setGerandoSugestaoAgente] = useState(false);
+
+  // Tracking de uso da varinha magica
+  const { usada: varinhaUsada, marcarUsada: marcarVarinhaUsada } = useFeatureUsada('varinha_magica');
 
   // Carrega agente ativo para esta conversa
   const carregarAgente = useCallback(async () => {
@@ -301,15 +304,42 @@ export default function ChatScreen({ route, navigation }: Props) {
       }
     } catch (error) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Alert.alert('Erro', 'Não foi possível enviar a mensagem');
+      Alert.alert(
+        'Mensagem nao enviada',
+        'A mensagem nao foi entregue. Verifique sua conexao e tente novamente.',
+        [
+          { text: 'OK', style: 'cancel' },
+          { text: 'Tentar novamente', onPress: () => enviarMensagem(textoEnviar) }
+        ]
+      );
     } finally {
       setEnviando(false);
     }
   };
 
   // Envia mensagens em sequência (como humano faria)
-  const enviarMensagensEmSequencia = async (mensagensParaEnviar: string[]) => {
+  const enviarMensagensEmSequencia = async (mensagensParaEnviar: string[], confirmar = true) => {
     if (!mensagensParaEnviar || mensagensParaEnviar.length === 0) return;
+
+    // Se tem mais de 1 mensagem, pede confirmacao
+    if (confirmar && mensagensParaEnviar.length > 1) {
+      const preview = mensagensParaEnviar
+        .map((msg, i) => `${i + 1}. ${msg.length > 50 ? msg.substring(0, 50) + '...' : msg}`)
+        .join('\n');
+
+      Alert.alert(
+        `Enviar ${mensagensParaEnviar.length} mensagens?`,
+        preview,
+        [
+          { text: 'Cancelar', style: 'cancel' },
+          {
+            text: 'Enviar todas',
+            onPress: () => enviarMensagensEmSequencia(mensagensParaEnviar, false),
+          },
+        ]
+      );
+      return;
+    }
 
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setEnviando(true);
@@ -340,7 +370,11 @@ export default function ChatScreen({ route, navigation }: Props) {
       }
     } catch (error) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Alert.alert('Erro', 'Não foi possível enviar as mensagens');
+      Alert.alert(
+        'Envio interrompido',
+        'Algumas mensagens podem nao ter sido enviadas. Verifique a conversa e tente novamente se necessario.',
+        [{ text: 'OK' }]
+      );
     } finally {
       setEnviando(false);
     }
@@ -349,11 +383,18 @@ export default function ChatScreen({ route, navigation }: Props) {
   // Envia todas as mensagens sugeridas em sequência (formato simples)
   const enviarTodasSugestoes = async () => {
     if (!sugestao) {
-      Alert.alert('Erro', 'Nenhuma sugestao disponivel');
+      Alert.alert('Sem sugestao', 'Toque na varinha magica para gerar uma sugestao primeiro.');
       return;
     }
     if (!sugestao.mensagens || sugestao.mensagens.length === 0) {
-      Alert.alert('Erro', 'A sugestao nao contem mensagens. Tente gerar novamente.');
+      Alert.alert(
+        'Sugestao vazia',
+        'A IA nao gerou mensagens desta vez. Tente gerar novamente.',
+        [
+          { text: 'OK', style: 'cancel' },
+          { text: 'Gerar nova', onPress: solicitarSugestao }
+        ]
+      );
       return;
     }
     await enviarMensagensEmSequencia(sugestao.mensagens);
@@ -375,6 +416,10 @@ export default function ChatScreen({ route, navigation }: Props) {
 
   const solicitarSugestao = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    // Marca feature como usada
+    if (!varinhaUsada) {
+      marcarVarinhaUsada();
+    }
     // Se tem agente ativo, usa sugestão do agente
     if (agente && agente.status === 'ativo') {
       setGerandoSugestaoAgente(true);
@@ -400,7 +445,14 @@ export default function ChatScreen({ route, navigation }: Props) {
           analise: resposta.sugestao.analise,
         });
       } catch (error) {
-        Alert.alert('Erro', 'Nao foi possivel gerar sugestao do agente');
+        Alert.alert(
+          'Sugestao indisponivel',
+          'O agente nao conseguiu gerar uma resposta agora. Isso pode acontecer quando:\n\n• A conexao esta instavel\n• O servidor esta ocupado\n\nTente novamente em alguns segundos.',
+          [
+            { text: 'OK', style: 'cancel' },
+            { text: 'Tentar novamente', onPress: solicitarSugestao }
+          ]
+        );
       } finally {
         setGerandoSugestaoAgente(false);
       }
@@ -411,7 +463,14 @@ export default function ChatScreen({ route, navigation }: Props) {
         const resposta = await conversasApi.sugerir(jid);
         setSugestao(resposta);
       } catch (error) {
-        Alert.alert('Erro', 'Nao foi possivel gerar sugestao');
+        Alert.alert(
+          'Sugestao indisponivel',
+          'Nao foi possivel gerar uma sugestao neste momento.\n\nDica: verifique se ha mensagens recentes na conversa para a IA analisar.',
+          [
+            { text: 'OK', style: 'cancel' },
+            { text: 'Tentar novamente', onPress: solicitarSugestao }
+          ]
+        );
       } finally {
         setSugerindo(false);
       }
@@ -574,6 +633,35 @@ export default function ChatScreen({ route, navigation }: Props) {
             </View>
           )}
 
+          {/* Indicador de confiança */}
+          {sugestao.confianca !== undefined && (
+            <View style={styles.confiancaContainer}>
+              <View style={styles.confiancaBarContainer}>
+                <View style={[
+                  styles.confiancaBar,
+                  {
+                    width: `${Math.min(sugestao.confianca * 100, 100)}%`,
+                    backgroundColor: sugestao.confianca >= 0.7 ? '#4CAF50' :
+                                    sugestao.confianca >= 0.5 ? '#FFC107' : '#FF5722'
+                  }
+                ]} />
+              </View>
+              <Text style={styles.confiancaTexto}>
+                {sugestao.confianca >= 0.8 ? 'Alta' :
+                 sugestao.confianca >= 0.5 ? 'Média' : 'Baixa'} confiança
+              </Text>
+            </View>
+          )}
+
+          {/* Aviso de baixa confiança */}
+          {sugestao.confianca !== undefined && sugestao.confianca < 0.6 && (
+            <View style={styles.avisoConfianca}>
+              <Text style={styles.avisoConfiancaTexto}>
+                ⚠️ A IA não tem certeza. Revise antes de enviar.
+              </Text>
+            </View>
+          )}
+
           {/* Opções de arquétipos */}
           {sugestao.formato === 'arquetipos' && sugestao.opcoes && sugestao.opcoes.length > 0 ? (
             <>
@@ -716,22 +804,25 @@ export default function ChatScreen({ route, navigation }: Props) {
         />
 
         {/* Botão Sugerir (varinha mágica ou agente) */}
-        <TouchableOpacity
-          style={[
-            styles.sugerirBotao,
-            agente && agente.status === 'ativo' && styles.sugerirBotaoAgente,
-          ]}
-          onPress={solicitarSugestao}
-          disabled={sugerindo || gerandoSugestaoAgente}
-        >
-          {sugerindo || gerandoSugestaoAgente ? (
-            <ActivityIndicator size="small" color={colors.iaAccent} />
-          ) : (
-            <Text style={styles.sugerirIcone}>
-              {agente && agente.status === 'ativo' ? (agente.tipo_info?.icone || '🎯') : '🪄'}
-            </Text>
-          )}
-        </TouchableOpacity>
+        <PulsingHighlight ativo={!varinhaUsada && !sugerindo && !gerandoSugestaoAgente}>
+          <TouchableOpacity
+            style={[
+              styles.sugerirBotao,
+              agente && agente.status === 'ativo' && styles.sugerirBotaoAgente,
+              !varinhaUsada && styles.sugerirBotaoDestaque,
+            ]}
+            onPress={solicitarSugestao}
+            disabled={sugerindo || gerandoSugestaoAgente}
+          >
+            {sugerindo || gerandoSugestaoAgente ? (
+              <ActivityIndicator size="small" color={colors.iaAccent} />
+            ) : (
+              <Text style={styles.sugerirIcone}>
+                {agente && agente.status === 'ativo' ? (agente.tipo_info?.icone || '🎯') : '🪄'}
+              </Text>
+            )}
+          </TouchableOpacity>
+        </PulsingHighlight>
 
         {/* Botão Enviar */}
         <TouchableOpacity
@@ -766,10 +857,12 @@ export default function ChatScreen({ route, navigation }: Props) {
 
       {/* Tooltip de onboarding para a varinha mágica */}
       <TooltipOnboarding
-        id="chat_varinha"
-        mensagem="Use a varinha mágica para gerar respostas inteligentes baseadas na conversa!"
+        id="chat_varinha_v2"
+        mensagem="Toque na varinha magica para a IA sugerir respostas com diferentes tons!"
         icone="🪄"
         posicao="top"
+        maxExibicoes={3}
+        delayMs={1500}
       />
     </KeyboardAvoidingView>
   );
@@ -910,6 +1003,40 @@ const styles = StyleSheet.create({
     fontSize: fontSize.sm,
     color: colors.textSecondary,
     fontStyle: 'italic',
+  },
+  confiancaContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: spacing.sm,
+    gap: spacing.sm,
+  },
+  confiancaBarContainer: {
+    flex: 1,
+    height: 6,
+    backgroundColor: 'rgba(0,0,0,0.1)',
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  confiancaBar: {
+    height: '100%',
+    borderRadius: 3,
+  },
+  confiancaTexto: {
+    fontSize: fontSize.xs,
+    color: colors.textSecondary,
+    minWidth: 90,
+  },
+  avisoConfianca: {
+    backgroundColor: 'rgba(255, 152, 0, 0.15)',
+    padding: spacing.sm,
+    borderRadius: borderRadius.sm,
+    marginBottom: spacing.sm,
+    borderLeftWidth: 3,
+    borderLeftColor: '#FF9800',
+  },
+  avisoConfiancaTexto: {
+    fontSize: fontSize.sm,
+    color: '#E65100',
   },
   sugestaoLabel: {
     fontSize: fontSize.sm,
@@ -1057,6 +1184,14 @@ const styles = StyleSheet.create({
     backgroundColor: colors.iaAccentLight,
     borderWidth: 2,
     borderColor: colors.iaAccent,
+  },
+  sugerirBotaoDestaque: {
+    backgroundColor: colors.iaAccent,
+    shadowColor: colors.iaAccent,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.5,
+    shadowRadius: 8,
+    elevation: 8,
   },
   sugerirIcone: {
     fontSize: 22,
