@@ -22,6 +22,7 @@ import { loadCachedMensagens, saveCachedMensagens } from '../services/cache';
 import { useConnectivity } from '../hooks/useConnectivity';
 import AtivarAgenteModal from '../components/AtivarAgenteModal';
 import AgenteBadge from '../components/AgenteBadge';
+import TooltipOnboarding from '../components/TooltipOnboarding';
 
 const INPUT_ACCESSORY_ID = 'chatInputAccessory';
 const PAGE_SIZE = 50;
@@ -761,6 +762,14 @@ export default function ChatScreen({ route, navigation }: Props) {
           setSugestao(null);
           setSugestaoAgente(null);
         }}
+      />
+
+      {/* Tooltip de onboarding para a varinha mágica */}
+      <TooltipOnboarding
+        id="chat_varinha"
+        mensagem="Use a varinha mágica para gerar respostas inteligentes baseadas na conversa!"
+        icone="🪄"
+        posicao="top"
       />
     </KeyboardAvoidingView>
   );

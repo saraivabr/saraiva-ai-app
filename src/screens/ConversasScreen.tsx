@@ -21,6 +21,7 @@ import { loadCachedConversations, saveCachedConversations } from '../services/ca
 import { useConnectivity } from '../hooks/useConnectivity';
 import AtivarAgenteModal from '../components/AtivarAgenteModal';
 import CardAcaoPrioritaria from '../components/CardAcaoPrioritaria';
+import TooltipOnboarding from '../components/TooltipOnboarding';
 
 interface Props {
   navigation: any;
@@ -500,6 +501,14 @@ export default function ConversasScreen({ navigation }: Props) {
           nomeContato={conversaSelecionada?.nome || ''}
           agenteAtivo={agenteAtivo}
           onAgenteAtivado={handleAgenteAtivado}
+        />
+
+        {/* Tooltips de onboarding */}
+        <TooltipOnboarding
+          id="conversas_acoes"
+          mensagem="O card acima mostra quem precisa da sua atenção. Toque para responder!"
+          icone="💡"
+          posicao="bottom"
         />
       </View>
     </SafeAreaView>
