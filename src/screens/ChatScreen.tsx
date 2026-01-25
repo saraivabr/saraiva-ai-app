@@ -342,7 +342,14 @@ export default function ChatScreen({ route, navigation }: Props) {
 
   // Envia todas as mensagens sugeridas em sequência (formato simples)
   const enviarTodasSugestoes = async () => {
-    if (!sugestao || sugestao.mensagens.length === 0) return;
+    if (!sugestao) {
+      Alert.alert('Erro', 'Nenhuma sugestao disponivel');
+      return;
+    }
+    if (!sugestao.mensagens || sugestao.mensagens.length === 0) {
+      Alert.alert('Erro', 'A sugestao nao contem mensagens. Tente gerar novamente.');
+      return;
+    }
     await enviarMensagensEmSequencia(sugestao.mensagens);
   };
 
@@ -589,7 +596,7 @@ export default function ChatScreen({ route, navigation }: Props) {
               </View>
 
               {/* Preview das mensagens do arquétipo selecionado */}
-              {sugestao.opcoes[opcaoSelecionada]?.mensagens && (
+              {sugestao.opcoes?.[opcaoSelecionada]?.mensagens && sugestao.opcoes[opcaoSelecionada].mensagens.length > 0 ? (
                 <View style={styles.sugestaoMensagens}>
                   <Text style={styles.previewLabel}>
                     Preview ({sugestao.opcoes[opcaoSelecionada].mensagens.length} msgs):
@@ -604,21 +611,29 @@ export default function ChatScreen({ route, navigation }: Props) {
                     ))}
                   </ScrollView>
                 </View>
+              ) : (
+                <View style={styles.sugestaoMensagens}>
+                  <Text style={[styles.previewLabel, { color: '#FF6B6B' }]}>
+                    Sem mensagens para esta opcao. Selecione outra.
+                  </Text>
+                </View>
               )}
 
               <View style={styles.sugestaoBotoes}>
                 <TouchableOpacity
                   style={[styles.sugestaoBotao, styles.sugestaoBotaoEnviar]}
                   onPress={() => {
-                    const mensagensParaEnviar = sugestao.opcoes[opcaoSelecionada]?.mensagens || [];
-                    if (mensagensParaEnviar.length > 0) {
-                      enviarMensagensEmSequencia(mensagensParaEnviar);
+                    const opcao = sugestao.opcoes?.[opcaoSelecionada];
+                    if (!opcao || !opcao.mensagens || opcao.mensagens.length === 0) {
+                      Alert.alert('Erro', 'Esta opcao nao contem mensagens. Selecione outra ou gere novamente.');
+                      return;
                     }
+                    enviarMensagensEmSequencia(opcao.mensagens);
                   }}
                   disabled={enviando}
                 >
                   <Text style={styles.sugestaoBotaoTexto}>
-                    {enviando ? 'Enviando...' : `Enviar ${sugestao.opcoes[opcaoSelecionada]?.nome || ''}`}
+                    {enviando ? 'Enviando...' : `Enviar ${sugestao.opcoes?.[opcaoSelecionada]?.nome || ''}`}
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
@@ -633,22 +648,28 @@ export default function ChatScreen({ route, navigation }: Props) {
             /* Fallback para formato simples */
             <>
               <Text style={styles.sugestaoLabel}>
-                Sugestão ({sugestao.mensagens.length} {sugestao.mensagens.length === 1 ? 'msg' : 'msgs'}):
+                Sugestão ({sugestao.mensagens?.length || 0} {(sugestao.mensagens?.length || 0) === 1 ? 'msg' : 'msgs'}):
               </Text>
               <View style={styles.sugestaoMensagens}>
-                {sugestao.mensagens.map((msg, index) => (
-                  <View key={index} style={styles.sugestaoMsgItem}>
-                    <View style={styles.sugestaoMsgBalao}>
-                      <Text style={styles.sugestaoMsgTexto}>{msg}</Text>
+                {sugestao.mensagens && sugestao.mensagens.length > 0 ? (
+                  sugestao.mensagens.map((msg, index) => (
+                    <View key={index} style={styles.sugestaoMsgItem}>
+                      <View style={styles.sugestaoMsgBalao}>
+                        <Text style={styles.sugestaoMsgTexto}>{msg}</Text>
+                      </View>
+                      <TouchableOpacity
+                        style={styles.sugestaoMsgRemover}
+                        onPress={() => removerSugestao(index)}
+                      >
+                        <Text style={styles.sugestaoMsgRemoverTexto}>✕</Text>
+                      </TouchableOpacity>
                     </View>
-                    <TouchableOpacity
-                      style={styles.sugestaoMsgRemover}
-                      onPress={() => removerSugestao(index)}
-                    >
-                      <Text style={styles.sugestaoMsgRemoverTexto}>✕</Text>
-                    </TouchableOpacity>
-                  </View>
-                ))}
+                  ))
+                ) : (
+                  <Text style={[styles.previewLabel, { color: '#FF6B6B' }]}>
+                    Erro ao gerar sugestao. Tente novamente.
+                  </Text>
+                )}
               </View>
               <View style={styles.sugestaoBotoes}>
                 <TouchableOpacity

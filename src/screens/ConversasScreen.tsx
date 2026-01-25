@@ -15,11 +15,12 @@ import {
   Alert,
 } from 'react-native';
 import { colors, spacing, fontSize, borderRadius } from '../theme/whatsapp';
-import { conversasApi, syncApi, agentesApi, Conversa, AgenteMissao } from '../services/api';
+import { conversasApi, syncApi, agentesApi, acoesApi, Conversa, AgenteMissao, AcaoPrioritaria } from '../services/api';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { loadCachedConversations, saveCachedConversations } from '../services/cache';
 import { useConnectivity } from '../hooks/useConnectivity';
 import AtivarAgenteModal from '../components/AtivarAgenteModal';
+import CardAcaoPrioritaria from '../components/CardAcaoPrioritaria';
 
 interface Props {
   navigation: any;
@@ -49,6 +50,10 @@ export default function ConversasScreen({ navigation }: Props) {
   const [conversaSelecionada, setConversaSelecionada] = useState<Conversa | null>(null);
   const [agenteAtivo, setAgenteAtivo] = useState<AgenteMissao | null>(null);
   const [agentesAtivos, setAgentesAtivos] = useState<Map<string, AgenteMissao>>(new Map());
+
+  // Estado das ações prioritárias
+  const [acaoPrioritaria, setAcaoPrioritaria] = useState<AcaoPrioritaria | null>(null);
+  const [acaoDismissed, setAcaoDismissed] = useState(false);
 
   const carregarConversas = useCallback(async (filtro?: Filtro) => {
     try {
@@ -87,6 +92,21 @@ export default function ConversasScreen({ navigation }: Props) {
       console.error('Erro ao carregar agentes:', error);
     }
   }, []);
+
+  // Carrega ação prioritária
+  const carregarAcaoPrioritaria = useCallback(async () => {
+    if (acaoDismissed) return;
+    try {
+      const data = await acoesApi.listarPrioritarias(1);
+      if (data.acoes.length > 0) {
+        setAcaoPrioritaria(data.acoes[0]);
+      } else {
+        setAcaoPrioritaria(null);
+      }
+    } catch (error) {
+      console.error('Erro ao carregar ações:', error);
+    }
+  }, [acaoDismissed]);
 
   // Abre modal para ativar/editar agente
   const abrirModalAgente = async (conversa: Conversa) => {
@@ -154,11 +174,13 @@ export default function ConversasScreen({ navigation }: Props) {
   useEffect(() => {
     carregarConversas(filtroAtivo);
     carregarAgentesAtivos();
+    carregarAcaoPrioritaria();
 
     // Polling somente como fallback quando WebSocket está offline
     if (!isConnected) {
       pollingRef.current = setInterval(() => {
         carregarConversas(filtroAtivo);
+        carregarAcaoPrioritaria();
       }, 10000);
     }
 
@@ -167,6 +189,8 @@ export default function ConversasScreen({ navigation }: Props) {
       if (appState.current.match(/inactive|background/) && nextAppState === 'active') {
         carregarConversas(filtroAtivo);
         carregarAgentesAtivos();
+        carregarAcaoPrioritaria();
+        setAcaoDismissed(false); // Reseta dismiss quando volta
       }
       appState.current = nextAppState;
     });
@@ -177,7 +201,7 @@ export default function ConversasScreen({ navigation }: Props) {
       }
       subscription.remove();
     };
-  }, [carregarConversas, carregarAgentesAtivos, filtroAtivo, isConnected]);
+  }, [carregarConversas, carregarAgentesAtivos, carregarAcaoPrioritaria, filtroAtivo, isConnected]);
 
   useEffect(() => {
     let isMounted = true;
@@ -322,12 +346,20 @@ export default function ConversasScreen({ navigation }: Props) {
 
   const renderConversa = ({ item }: { item: Conversa }) => {
     const agenteConversa = agentesAtivos.get(item.jid);
+    // Verifica se está aguardando resposta (última msg foi recebida)
+    const aguardandoResposta = item.ultima_mensagem?.direcao === 'recebida';
+    // Calcula tempo sem resposta
+    const tempoSemResposta = item.ultima_mensagem?.data_hora
+      ? Math.floor((Date.now() - new Date(item.ultima_mensagem.data_hora).getTime()) / (1000 * 60 * 60))
+      : 0;
+    const urgente = aguardandoResposta && tempoSemResposta > 4;
 
     return (
       <TouchableOpacity
         style={[
           styles.conversaItem,
           agenteConversa && styles.conversaComAgente,
+          urgente && styles.conversaUrgente,
         ]}
         onPress={() => navigation.navigate('Chat', { jid: item.jid, nome: item.nome })}
         onLongPress={() => abrirModalAgente(item)}
@@ -355,20 +387,26 @@ export default function ConversasScreen({ navigation }: Props) {
               </Text>
             </View>
           )}
+          {/* Indicador de aguardando resposta */}
+          {!agenteConversa && aguardandoResposta && (
+            <View style={[styles.aguardandoBadge, urgente && styles.aguardandoUrgente]}>
+              <Text style={styles.aguardandoTexto}>{urgente ? '!' : '•'}</Text>
+            </View>
+          )}
         </View>
 
         {/* Info */}
         <View style={styles.conversaInfo}>
           <View style={styles.conversaHeader}>
-            <Text style={styles.nome} numberOfLines={1}>
+            <Text style={[styles.nome, urgente && styles.nomeUrgente]} numberOfLines={1}>
               {item.nome || item.jid.split('@')[0]}
             </Text>
-            <Text style={styles.hora}>
+            <Text style={[styles.hora, urgente && styles.horaUrgente]}>
               {formatarHora(item.ultima_mensagem?.data_hora || item.ultima_interacao)}
             </Text>
           </View>
           <View style={styles.mensagemRow}>
-            <Text style={styles.ultimaMensagem} numberOfLines={1}>
+            <Text style={[styles.ultimaMensagem, aguardandoResposta && styles.msgRecebida]} numberOfLines={1}>
               {getUltimaMensagemTexto(item)}
             </Text>
             {/* Indicadores sutis à direita */}
@@ -427,6 +465,21 @@ export default function ConversasScreen({ navigation }: Props) {
           ItemSeparatorComponent={() => <View style={styles.separator} />}
           contentContainerStyle={styles.listContent}
           style={styles.flatList}
+          ListHeaderComponent={
+            acaoPrioritaria && !acaoDismissed ? (
+              <CardAcaoPrioritaria
+                acao={acaoPrioritaria}
+                onPress={() => {
+                  navigation.navigate('Chat', {
+                    jid: acaoPrioritaria.jid,
+                    nome: acaoPrioritaria.nome
+                  });
+                  setAcaoDismissed(true);
+                }}
+                onDismiss={() => setAcaoDismissed(true)}
+              />
+            ) : null
+          }
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
               <Text style={styles.emptyText}>
@@ -658,5 +711,43 @@ const styles = StyleSheet.create({
     fontSize: fontSize.xs,
     color: colors.textLight,
     fontWeight: '600',
+  },
+  // Estilos para indicadores de urgência
+  conversaUrgente: {
+    backgroundColor: '#FFF5F5',
+    borderLeftWidth: 3,
+    borderLeftColor: '#FF4444',
+  },
+  aguardandoBadge: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    backgroundColor: '#4CAF50',
+    borderRadius: 9,
+    width: 18,
+    height: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: colors.background,
+  },
+  aguardandoUrgente: {
+    backgroundColor: '#FF4444',
+  },
+  aguardandoTexto: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+  nomeUrgente: {
+    color: '#D32F2F',
+  },
+  horaUrgente: {
+    color: '#FF4444',
+    fontWeight: '600',
+  },
+  msgRecebida: {
+    color: colors.textPrimary,
+    fontWeight: '500',
   },
 });

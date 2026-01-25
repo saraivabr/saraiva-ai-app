@@ -107,6 +107,34 @@ export interface SugestaoAgente {
   progresso?: string;
 }
 
+// Tipos para Ações Prioritárias
+export interface AcaoPrioritaria {
+  tipo: 'aguardando_resposta' | 'agente_ativo' | 'follow_up';
+  urgencia: 'alta' | 'media' | 'baixa';
+  jid: string;
+  nome: string;
+  foto_url?: string | null;
+  titulo: string;
+  subtitulo: string;
+  preview: string;
+  icone: string;
+  cor: string;
+  tempo_segundos?: number;
+  dias_sem_resposta?: number;
+  agente_tipo?: string;
+  agente_id?: number;
+  prioridade_contato?: number;
+}
+
+export interface StatsRapidas {
+  mensagens_hoje: number;
+  enviadas_hoje: number;
+  recebidas_hoje: number;
+  agentes_ativos: number;
+  contatos_vip: number;
+  data: string;
+}
+
 // API Functions
 export const conversasApi = {
   // Lista todas as conversas (pode filtrar por categoria/prioridade)
@@ -328,6 +356,25 @@ export const agentesApi = {
     await api.post(`/agentes/${encodeURIComponent(jid)}/registrar-envio`, {
       aprovado,
     });
+  },
+};
+
+// API de Ações Prioritárias
+export const acoesApi = {
+  // Lista ações prioritárias
+  listarPrioritarias: async (limit = 5): Promise<{
+    acoes: AcaoPrioritaria[];
+    total: number;
+    resumo: { aguardando_resposta: number; agentes_ativos: number; follow_ups: number };
+  }> => {
+    const response = await api.get('/acoes/prioritarias', { params: { limit } });
+    return response.data;
+  },
+
+  // Estatísticas rápidas
+  stats: async (): Promise<StatsRapidas> => {
+    const response = await api.get('/acoes/stats');
+    return response.data;
   },
 };
 
