@@ -506,9 +506,17 @@ export default function ConversasScreen({ navigation }: Props) {
         {/* Tooltips de onboarding */}
         <TooltipOnboarding
           id="conversas_acoes"
-          mensagem="O card acima mostra quem precisa da sua atenção. Toque para responder!"
+          mensagem="O card acima mostra quem precisa da sua atencao. Toque para responder!"
           icone="💡"
           posicao="bottom"
+        />
+        <TooltipOnboarding
+          id="conversas_longpress_v2"
+          mensagem="Segure uma conversa para ativar um agente de IA que responde por voce!"
+          icone="🎯"
+          posicao="bottom"
+          maxExibicoes={2}
+          delayMs={3000}
         />
       </View>
     </SafeAreaView>

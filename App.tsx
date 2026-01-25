@@ -11,6 +11,7 @@ import IAScreen from './src/screens/IAScreen';
 import PerfilScreen from './src/screens/PerfilScreen';
 import MissoesScreen from './src/screens/MissoesScreen';
 import { ComBadgeNovo } from './src/components/BadgeNovo';
+import TourGuiado from './src/components/TourGuiado';
 import { colors } from './src/theme/whatsapp';
 
 const Stack = createNativeStackNavigator();
@@ -112,6 +113,7 @@ export default function App() {
   return (
     <NavigationContainer>
       <StatusBar style="light" />
+      <TourGuiado />
       <Stack.Navigator
         screenOptions={{
           headerStyle: {

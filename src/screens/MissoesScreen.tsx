@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { colors, spacing, fontSize, borderRadius } from '../theme/whatsapp';
 import { agentesApi, AgenteMissao } from '../services/api';
+import { useFeatureUsada } from '../components/TooltipOnboarding';
 
 interface Props {
   navigation: any;
@@ -21,6 +22,14 @@ export default function MissoesScreen({ navigation }: Props) {
   const [agentes, setAgentes] = useState<AgenteMissao[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const { usada: abaUsada, marcarUsada: marcarAbaUsada } = useFeatureUsada('aba_missoes');
+
+  // Marca a aba como usada na primeira visita
+  useEffect(() => {
+    if (!abaUsada) {
+      marcarAbaUsada();
+    }
+  }, [abaUsada, marcarAbaUsada]);
 
   const carregarAgentes = useCallback(async () => {
     try {
