@@ -23,6 +23,11 @@ import { useConnectivity } from '../hooks/useConnectivity';
 import AtivarAgenteModal from '../components/AtivarAgenteModal';
 import AgenteBadge from '../components/AgenteBadge';
 import TooltipOnboarding, { PulsingHighlight, useFeatureUsada } from '../components/TooltipOnboarding';
+import GlassCard from '../components/GlassCard';
+import AnimatedConfidenceBar from '../components/AnimatedConfidenceBar';
+import InteractiveArchetypeCard from '../components/InteractiveArchetypeCard';
+import TypingMessage from '../components/TypingMessage';
+import Confetti from '../components/Confetti';
 
 const INPUT_ACCESSORY_ID = 'chatInputAccessory';
 const PAGE_SIZE = 50;
@@ -60,9 +65,37 @@ export default function ChatScreen({ route, navigation }: Props) {
   const [modalAgenteVisivel, setModalAgenteVisivel] = useState(false);
   const [sugestaoAgente, setSugestaoAgente] = useState<SugestaoAgente | null>(null);
   const [gerandoSugestaoAgente, setGerandoSugestaoAgente] = useState(false);
+  const autoRespondendoRef = useRef(false);
+  const ultimoAutoMessageIdRef = useRef<string | null>(null);
+  const agenteAtivadoAgoraRef = useRef(false);
 
   // Tracking de uso da varinha magica
   const { usada: varinhaUsada, marcarUsada: marcarVarinhaUsada } = useFeatureUsada('varinha_magica');
+  const [showConfetti, setShowConfetti] = useState(false);
+
+  const normalizarConfianca = (valor?: number) => {
+    if (typeof valor !== 'number') {
+      return undefined;
+    }
+    if (valor > 1) {
+      return Math.min(valor / 100, 1);
+    }
+    return Math.max(valor, 0);
+  };
+
+  const formatarConfiancaPercentual = (valor?: number) => {
+    const normalizada = normalizarConfianca(valor);
+    if (normalizada === undefined) {
+      return '';
+    }
+    return `${Math.round(normalizada * 100)}%`;
+  };
+
+  const agenteAutoAtivo = Boolean(
+    agente &&
+      agente.status === 'ativo' &&
+      (agente.modo === 'automatico' || agente.modo === 'hibrido')
+  );
 
   // Carrega agente ativo para esta conversa
   const carregarAgente = useCallback(async () => {
@@ -73,6 +106,10 @@ export default function ChatScreen({ route, navigation }: Props) {
       console.error('Erro ao carregar agente:', error);
     }
   }, [jid]);
+
+  const atualizarHasMore = useCallback((nextOffset: number, nextTotal: number) => {
+    setHasMore(nextOffset < nextTotal);
+  }, []);
 
   useEffect(() => {
     carregarAgente();
@@ -147,10 +184,6 @@ export default function ChatScreen({ route, navigation }: Props) {
 
   const scrollToBottom = useCallback((animated = true) => {
     flatListRef.current?.scrollToEnd({ animated });
-  }, []);
-
-  const atualizarHasMore = useCallback((nextOffset: number, nextTotal: number) => {
-    setHasMore(nextOffset < nextTotal);
   }, []);
 
   useEffect(() => {
@@ -239,6 +272,19 @@ export default function ChatScreen({ route, navigation }: Props) {
       }
     }, [jid, isNearBottom, scrollToBottom]),
   });
+
+  // Registra envio de mensagem do agente
+  const registrarEnvioAgente = useCallback(async (aprovado: boolean) => {
+    if (agente) {
+      try {
+        await agentesApi.registrarEnvio(jid, aprovado);
+        // Recarrega agente para atualizar metricas
+        carregarAgente();
+      } catch (error) {
+        console.error('Erro ao registrar envio:', error);
+      }
+    }
+  }, [agente, jid, carregarAgente]);
 
   // Carrega inicial + fallback polling quando WebSocket está offline
   useEffect(() => {
@@ -365,6 +411,11 @@ export default function ChatScreen({ route, navigation }: Props) {
       }
       setSugestao(null);
       setOpcaoSelecionada(0);
+
+      // Confetti celebration!
+      setShowConfetti(true);
+      setTimeout(() => setShowConfetti(false), 3000);
+
       if (isNearBottom) {
         setTimeout(() => scrollToBottom(true), 100);
       }
@@ -379,6 +430,89 @@ export default function ChatScreen({ route, navigation }: Props) {
       setEnviando(false);
     }
   };
+
+  const responderComAgente = useCallback(async ({
+    mensagemBase,
+    forcar = false,
+    contextoExtra,
+    chaveContexto,
+  }: {
+    mensagemBase?: Mensagem | null;
+    forcar?: boolean;
+    contextoExtra?: string;
+    chaveContexto?: string;
+  } = {}) => {
+    if (!agenteAutoAtivo) return;
+    if (autoRespondendoRef.current) return;
+    if (!mensagemBase && !contextoExtra) {
+      return;
+    }
+    if (mensagemBase && mensagemBase.direcao !== 'recebida') {
+      return;
+    }
+
+    const baseKey = chaveContexto || mensagemBase?.message_id || 'sem_mensagem';
+    if (!forcar && ultimoAutoMessageIdRef.current === baseKey) {
+      return;
+    }
+
+    autoRespondendoRef.current = true;
+    try {
+      const instrucaoProativa = 'Seja direto, puxe assunto e avance a conversa com proposta clara.';
+      const mensagemContextoBase = contextoExtra || mensagemBase?.conteudo || '';
+      const mensagemContexto = mensagemContextoBase
+        ? `${mensagemContextoBase}\n\n${instrucaoProativa}`
+        : instrucaoProativa;
+      const resposta = await agentesApi.gerarResposta(jid, mensagemContexto);
+      const mensagensGeradas = resposta.sugestao?.mensagens || [];
+      if (mensagensGeradas.length > 0) {
+        await enviarMensagensEmSequencia(mensagensGeradas, false);
+        await registrarEnvioAgente(true);
+      }
+      ultimoAutoMessageIdRef.current = baseKey;
+    } catch (error) {
+      console.error('Erro ao responder com agente:', error);
+    } finally {
+      autoRespondendoRef.current = false;
+    }
+  }, [agenteAutoAtivo, jid, enviarMensagensEmSequencia, registrarEnvioAgente]);
+
+  useEffect(() => {
+    if (!agenteAutoAtivo) {
+      ultimoAutoMessageIdRef.current = null;
+      agenteAtivadoAgoraRef.current = false;
+      return;
+    }
+    if (!agenteAtivadoAgoraRef.current) return;
+    agenteAtivadoAgoraRef.current = false;
+    const ultimaRecebida = [...mensagens].reverse().find((m) => m.direcao === 'recebida');
+    if (ultimaRecebida) {
+      responderComAgente({ mensagemBase: ultimaRecebida, forcar: true });
+      return;
+    }
+    const ultimaMensagem = [...mensagens].reverse().find((m) => m.conteudo);
+    const conteudoBase = ultimaMensagem?.conteudo?.trim() || '';
+    const contextoExtra = conteudoBase
+      ? `Inicie a conversa com base na ultima mensagem enviada: ${conteudoBase}`
+      : 'Inicie a conversa de forma proativa e puxe assunto.';
+    const chaveContexto = ultimaMensagem?.message_id
+      ? `start_${ultimaMensagem.message_id}`
+      : 'start_sem_mensagem';
+    responderComAgente({ contextoExtra, chaveContexto, forcar: true });
+  }, [agenteAutoAtivo, mensagens, responderComAgente]);
+
+  useEffect(() => {
+    if (!agenteAutoAtivo) return;
+    const ultimaRecebida = [...mensagens].reverse().find((m) => m.direcao === 'recebida');
+    if (!ultimaRecebida || !ultimaRecebida.message_id) return;
+    if (!ultimoAutoMessageIdRef.current) {
+      ultimoAutoMessageIdRef.current = ultimaRecebida.message_id;
+      return;
+    }
+    if (ultimoAutoMessageIdRef.current !== ultimaRecebida.message_id) {
+      responderComAgente({ mensagemBase: ultimaRecebida });
+    }
+  }, [agenteAutoAtivo, mensagens, responderComAgente]);
 
   // Envia todas as mensagens sugeridas em sequência (formato simples)
   const enviarTodasSugestoes = async () => {
@@ -408,6 +542,7 @@ export default function ChatScreen({ route, navigation }: Props) {
       setSugestao(null);
     } else {
       setSugestao({
+        ...sugestao,
         mensagens: novasMensagens,
         texto_unico: novasMensagens.join(' | ')
       });
@@ -429,16 +564,18 @@ export default function ChatScreen({ route, navigation }: Props) {
         const mensagemContexto = ultimaRecebida?.conteudo || '';
 
         const resposta = await agentesApi.gerarResposta(jid, mensagemContexto);
+        const confiancaTexto = formatarConfiancaPercentual(resposta.sugestao.confianca);
         setSugestaoAgente(resposta.sugestao);
         // Converte para formato de sugestao normal para reutilizar o mesmo componente
         setSugestao({
           formato: 'simples',
           mensagens: resposta.sugestao.mensagens,
           texto_unico: resposta.sugestao.mensagens.join(' | '),
+          confianca: normalizarConfianca(resposta.sugestao.confianca),
           opcoes: [{
             tipo: agente.tipo,
             icone: agente.tipo_info?.icone || '🎯',
-            nome: `${agente.tipo_info?.nome || 'Agente'} (${resposta.sugestao.confianca}%)`,
+            nome: `${agente.tipo_info?.nome || 'Agente'}${confiancaTexto ? ` (${confiancaTexto})` : ''}`,
             descricao: resposta.sugestao.estrategia,
             mensagens: resposta.sugestao.mensagens,
           }],
@@ -461,7 +598,10 @@ export default function ChatScreen({ route, navigation }: Props) {
       setSugerindo(true);
       try {
         const resposta = await conversasApi.sugerir(jid);
-        setSugestao(resposta);
+        setSugestao({
+          ...resposta,
+          confianca: normalizarConfianca(resposta.confianca),
+        });
       } catch (error) {
         Alert.alert(
           'Sugestao indisponivel',
@@ -473,19 +613,6 @@ export default function ChatScreen({ route, navigation }: Props) {
         );
       } finally {
         setSugerindo(false);
-      }
-    }
-  };
-
-  // Registra envio de mensagem do agente
-  const registrarEnvioAgente = async (aprovado: boolean) => {
-    if (agente) {
-      try {
-        await agentesApi.registrarEnvio(jid, aprovado);
-        // Recarrega agente para atualizar metricas
-        carregarAgente();
-      } catch (error) {
-        console.error('Erro ao registrar envio:', error);
       }
     }
   };
@@ -502,6 +629,9 @@ export default function ChatScreen({ route, navigation }: Props) {
     const isEnviada = item.direcao === 'enviada';
     const isIA = item.enviada_por_ia;
     const maxBubbleWidth = screenWidth * 0.75;
+    const isAudio = item.tipo === 'audio';
+    const transcricao = item.conteudo?.trim() || '';
+    const hasTranscricao = transcricao.length > 0;
 
     return (
       <View
@@ -521,17 +651,26 @@ export default function ChatScreen({ route, navigation }: Props) {
               : styles.balaoRecebido,
           ]}
         >
-          {item.tipo === 'audio' && (
-            <View style={styles.audioContainer}>
-              <Text style={styles.audioIcon}>🎤</Text>
-              <Text style={styles.audioDuracao}>
-                {item.duracao_audio ? `${item.duracao_audio}s` : 'Áudio'}
+          {isAudio ? (
+            <View style={styles.transcricaoContainer}>
+              <View style={styles.transcricaoHeader}>
+                <Text style={styles.transcricaoLabel}>Transcrição</Text>
+                {item.duracao_audio ? (
+                  <Text style={styles.transcricaoDuracao}>{item.duracao_audio}s</Text>
+                ) : null}
+              </View>
+              <Text
+                style={[
+                  styles.mensagemTexto,
+                  !hasTranscricao && styles.transcricaoPlaceholder
+                ]}
+              >
+                {hasTranscricao ? transcricao : 'Transcrição pendente'}
               </Text>
             </View>
-          )}
-          {item.conteudo && (
+          ) : item.conteudo ? (
             <Text style={styles.mensagemTexto}>{item.conteudo}</Text>
-          )}
+          ) : null}
           <View style={styles.mensagemFooter}>
             <Text style={styles.mensagemHora}>{formatarHora(item.data_hora)}</Text>
             {isEnviada && (
@@ -610,7 +749,7 @@ export default function ChatScreen({ route, navigation }: Props) {
 
       {/* Sugestão da IA - Arquetipos psicológicos */}
       {sugestao && (
-        <View style={styles.sugestaoContainer}>
+        <GlassCard style={styles.sugestaoContainer} intensity={25}>
           {/* Header com análise e emoção detectada */}
           {sugestao.formato === 'arquetipos' && (sugestao.analise || sugestao.emocao) && (
             <View style={styles.analiseHeader}>
@@ -635,22 +774,7 @@ export default function ChatScreen({ route, navigation }: Props) {
 
           {/* Indicador de confiança */}
           {sugestao.confianca !== undefined && (
-            <View style={styles.confiancaContainer}>
-              <View style={styles.confiancaBarContainer}>
-                <View style={[
-                  styles.confiancaBar,
-                  {
-                    width: `${Math.min(sugestao.confianca * 100, 100)}%`,
-                    backgroundColor: sugestao.confianca >= 0.7 ? '#4CAF50' :
-                                    sugestao.confianca >= 0.5 ? '#FFC107' : '#FF5722'
-                  }
-                ]} />
-              </View>
-              <Text style={styles.confiancaTexto}>
-                {sugestao.confianca >= 0.8 ? 'Alta' :
-                 sugestao.confianca >= 0.5 ? 'Média' : 'Baixa'} confiança
-              </Text>
-            </View>
+            <AnimatedConfidenceBar confidence={sugestao.confianca} />
           )}
 
           {/* Aviso de baixa confiança */}
@@ -668,28 +792,14 @@ export default function ChatScreen({ route, navigation }: Props) {
               <Text style={styles.sugestaoLabel}>Escolha o tom da resposta:</Text>
               <View style={styles.arquetiposGrid}>
                 {sugestao.opcoes.map((opcao, index) => (
-                  <TouchableOpacity
+                  <InteractiveArchetypeCard
                     key={opcao.tipo}
-                    style={[
-                      styles.arquetipoCard,
-                      opcaoSelecionada === index && styles.arquetipoCardSelecionado
-                    ]}
-                    onPress={() => {
-                      Haptics.selectionAsync();
-                      setOpcaoSelecionada(index);
-                    }}
-                  >
-                    <Text style={styles.arquetipoIcone}>{opcao.icone}</Text>
-                    <Text style={[
-                      styles.arquetipoNome,
-                      opcaoSelecionada === index && styles.arquetipoNomeSelecionado
-                    ]}>
-                      {opcao.nome}
-                    </Text>
-                    <Text style={styles.arquetipoDescricao} numberOfLines={2}>
-                      {opcao.descricao}
-                    </Text>
-                  </TouchableOpacity>
+                    icon={opcao.icone}
+                    name={opcao.nome}
+                    description={opcao.descricao}
+                    isSelected={opcaoSelecionada === index}
+                    onPress={() => setOpcaoSelecionada(index)}
+                  />
                 ))}
               </View>
 
@@ -697,15 +807,16 @@ export default function ChatScreen({ route, navigation }: Props) {
               {sugestao.opcoes?.[opcaoSelecionada]?.mensagens && sugestao.opcoes[opcaoSelecionada].mensagens.length > 0 ? (
                 <View style={styles.sugestaoMensagens}>
                   <Text style={styles.previewLabel}>
-                    Preview ({sugestao.opcoes[opcaoSelecionada].mensagens.length} msgs):
+                    Prévia ({sugestao.opcoes[opcaoSelecionada].mensagens.length} mensagens):
                   </Text>
                   <ScrollView style={styles.previewScroll} nestedScrollEnabled>
                     {sugestao.opcoes[opcaoSelecionada].mensagens.map((msg, index) => (
-                      <View key={index} style={styles.sugestaoMsgItem}>
-                        <View style={styles.sugestaoMsgBalao}>
-                          <Text style={styles.sugestaoMsgTexto}>{msg}</Text>
-                        </View>
-                      </View>
+                      <TypingMessage
+                        key={index}
+                        message={msg}
+                        delay={index * 200}
+                        speed={20}
+                      />
                     ))}
                   </ScrollView>
                 </View>
@@ -788,7 +899,7 @@ export default function ChatScreen({ route, navigation }: Props) {
               </View>
             </>
           )}
-        </View>
+        </GlassCard>
       )}
 
       {/* Input */}
@@ -850,10 +961,14 @@ export default function ChatScreen({ route, navigation }: Props) {
         agenteAtivo={agente}
         onAgenteAtivado={(novoAgente) => {
           setAgente(novoAgente);
+          agenteAtivadoAgoraRef.current = true;
           setSugestao(null);
           setSugestaoAgente(null);
         }}
       />
+
+      {/* Confetti celebration */}
+      {showConfetti && <Confetti count={20} />}
 
       {/* Tooltip de onboarding para a varinha mágica */}
       <TooltipOnboarding
@@ -956,28 +1071,35 @@ const styles = StyleSheet.create({
     color: colors.checkBlue,
     marginLeft: spacing.xs,
   },
-  audioContainer: {
+  transcricaoContainer: {
+    gap: spacing.xs,
+  },
+  transcricaoHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: spacing.xs,
+    justifyContent: 'space-between',
   },
-  audioIcon: {
-    fontSize: 20,
-    marginRight: spacing.sm,
+  transcricaoLabel: {
+    fontSize: fontSize.xs,
+    color: colors.textSecondary,
+    fontWeight: '600',
+    textTransform: 'uppercase',
   },
-  audioDuracao: {
-    fontSize: fontSize.sm,
+  transcricaoDuracao: {
+    fontSize: fontSize.xs,
     color: colors.textSecondary,
   },
+  transcricaoPlaceholder: {
+    color: colors.textSecondary,
+    fontStyle: 'italic',
+  },
   sugestaoContainer: {
-    backgroundColor: colors.iaAccentLight,
-    padding: spacing.md,
-    marginHorizontal: spacing.md,
+    padding: spacing.sm,
+    marginHorizontal: spacing.sm,
     marginBottom: spacing.sm,
-    borderRadius: borderRadius.md,
-    borderLeftWidth: 3,
-    borderLeftColor: colors.iaAccent,
-    maxHeight: 400,
+    maxHeight: 360,
+    alignSelf: 'center',
+    width: '92%',
   },
   analiseHeader: {
     marginBottom: spacing.sm,
@@ -1088,7 +1210,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.xs,
   },
   previewScroll: {
-    maxHeight: 100,
+    maxHeight: 84,
   },
   sugestaoTexto: {
     fontSize: fontSize.md,
@@ -1097,11 +1219,11 @@ const styles = StyleSheet.create({
   },
   sugestaoMensagens: {
     marginBottom: spacing.sm,
-    maxHeight: 150,
+    maxHeight: 140,
   },
   sugestaoMsgItem: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     marginBottom: spacing.xs,
   },
   sugestaoMsgBalao: {
@@ -1124,6 +1246,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginLeft: spacing.sm,
+    marginTop: 2,
   },
   sugestaoMsgRemoverTexto: {
     fontSize: fontSize.sm,

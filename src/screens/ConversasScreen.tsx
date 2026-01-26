@@ -289,7 +289,9 @@ export default function ConversasScreen({ navigation }: Props) {
     const { tipo, texto, direcao } = conversa.ultima_mensagem;
     const prefixo = direcao === 'enviada' ? 'Você: ' : '';
 
-    if (tipo === 'audio') return `${prefixo}🎤 Áudio`;
+    if (tipo === 'audio') {
+      return texto ? `${prefixo}🎤 ${texto}` : `${prefixo}🎤 Áudio`;
+    }
     if (tipo === 'imagem') return `${prefixo}📷 Foto`;
     if (tipo === 'video') return `${prefixo}🎥 Vídeo`;
     if (tipo === 'documento') return `${prefixo}📄 Documento`;
