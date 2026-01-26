@@ -10,6 +10,10 @@ import ChatScreen from './src/screens/ChatScreen';
 import IAScreen from './src/screens/IAScreen';
 import PerfilScreen from './src/screens/PerfilScreen';
 import MissoesScreen from './src/screens/MissoesScreen';
+import ConexaoScreen from './src/screens/ConexaoScreen';
+import SuggestionsScreen from './src/screens/SuggestionsScreen';
+import PainelScreen from './src/screens/PainelScreen';
+import PerfilContatoScreen from './src/screens/PerfilContatoScreen';
 import { ComBadgeNovo } from './src/components/BadgeNovo';
 import TourGuiado from './src/components/TourGuiado';
 import { colors } from './src/theme/whatsapp';
@@ -83,11 +87,30 @@ function TabNavigator() {
         }}
       />
       <Tab.Screen
-        name="Chamadas"
-        component={ChamadasScreen}
+        name="Painel"
+        component={PainelScreen}
         options={{
+          title: 'Painel',
+          tabBarLabel: 'Painel',
           tabBarIcon: ({ color, size }) => (
-            <Text style={{ fontSize: size, color }}>📞</Text>
+            <ComBadgeNovo featureId="aba_painel" posicao="topRight" tamanho="pequeno">
+              <Text style={{ fontSize: size, color }}>📊</Text>
+            </ComBadgeNovo>
+          ),
+          headerStyle: {
+            backgroundColor: colors.iaAccent,
+          },
+          tabBarActiveTintColor: colors.iaAccent,
+        }}
+      />
+      <Tab.Screen
+        name="Conexao"
+        component={ConexaoScreen}
+        options={{
+          title: 'Conexão',
+          tabBarLabel: 'Conexão',
+          tabBarIcon: ({ color, size }) => (
+            <Text style={{ fontSize: size, color }}>📱</Text>
           ),
         }}
       />
@@ -142,6 +165,25 @@ export default function App() {
           component={PerfilScreen}
           options={({ route }: any) => ({
             title: route.params?.nome || 'Perfil',
+          })}
+        />
+        <Stack.Screen
+          name="Suggestions"
+          component={SuggestionsScreen}
+          options={{
+            headerShown: false,
+            presentation: 'fullScreenModal',
+            animation: 'slide_from_bottom',
+          }}
+        />
+        <Stack.Screen
+          name="PerfilContato"
+          component={PerfilContatoScreen}
+          options={({ route }: any) => ({
+            title: route.params?.nome || 'Perfil',
+            headerStyle: {
+              backgroundColor: colors.iaAccent,
+            },
           })}
         />
       </Stack.Navigator>

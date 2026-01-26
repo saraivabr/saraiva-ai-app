@@ -219,11 +219,13 @@ export const syncApi = {
     return response.data;
   },
 
-  // Sincroniza fotos de perfil de todos os contatos
+  // Sincroniza nomes e fotos de todos os contatos
   sincronizarContatos: async (): Promise<{
     status: string;
     total_contatos: number;
-    atualizados: number;
+    nomes_atualizados: number;
+    fotos_atualizadas: number;
+    mapa_nomes_total: number;
     erros: number;
   }> => {
     const response = await api.post('/contatos/sincronizar', {}, { timeout: 120000 });
@@ -375,6 +377,62 @@ export const acoesApi = {
   // Estatísticas rápidas
   stats: async (): Promise<StatsRapidas> => {
     const response = await api.get('/acoes/stats');
+    return response.data;
+  },
+};
+
+// API de Conexão WhatsApp
+export const conexaoApi = {
+  // Verifica status da conexão
+  status: async (): Promise<{
+    connected: boolean;
+    state: 'open' | 'close' | 'connecting' | 'conflict' | 'unknown' | 'error';
+    message: string;
+    instance?: string;
+    checked_at?: string;
+  }> => {
+    const response = await api.get('/admin/conexao/status');
+    return response.data;
+  },
+
+  // Gera código de pareamento
+  gerarCodigo: async (phone: string): Promise<{
+    success: boolean;
+    pairingCode?: string;
+    message: string;
+    error?: string;
+  }> => {
+    const response = await api.post('/admin/conexao/pairing-code', null, {
+      params: { phone },
+    });
+    return response.data;
+  },
+};
+
+// API do Painel (Relationship Intelligence)
+export const painelApi = {
+  getResumo: async () => {
+    const response = await api.get('/painel/resumo');
+    return response.data;
+  },
+  getRanking: async (limit = 10) => {
+    const response = await api.get(`/painel/contatos/ranking?limit=${limit}`);
+    return response.data;
+  },
+  getPerfilContato: async (contatoId: number) => {
+    const response = await api.get(`/painel/contato/${contatoId}/perfil`);
+    return response.data;
+  },
+  getSugestao: async (contatoId: number) => {
+    const response = await api.get(`/painel/contato/${contatoId}/sugestao`);
+    return response.data;
+  },
+  getNudges: async () => {
+    const response = await api.get('/painel/nudges');
+    return response.data;
+  },
+  getSaude: async () => {
+    const response = await api.get('/painel/saude');
     return response.data;
   },
 };
