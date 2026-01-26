@@ -12,7 +12,6 @@ import {
   Alert,
   useWindowDimensions,
   Keyboard,
-  ScrollView,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { colors, spacing, fontSize, borderRadius } from '../theme/whatsapp';
@@ -22,12 +21,9 @@ import { loadCachedMensagens, saveCachedMensagens } from '../services/cache';
 import { useConnectivity } from '../hooks/useConnectivity';
 import AtivarAgenteModal from '../components/AtivarAgenteModal';
 import AgenteBadge from '../components/AgenteBadge';
-import TooltipOnboarding, { PulsingHighlight, useFeatureUsada } from '../components/TooltipOnboarding';
-import GlassCard from '../components/GlassCard';
-import AnimatedConfidenceBar from '../components/AnimatedConfidenceBar';
-import InteractiveArchetypeCard from '../components/InteractiveArchetypeCard';
-import TypingMessage from '../components/TypingMessage';
-import Confetti from '../components/Confetti';
+import InlineSuggestions from '../components/InlineSuggestions';
+import QuickReplyChips from '../components/QuickReplyChips';
+import SmartComposePreview from '../components/SmartComposePreview';
 
 const INPUT_ACCESSORY_ID = 'chatInputAccessory';
 const PAGE_SIZE = 50;
@@ -69,9 +65,19 @@ export default function ChatScreen({ route, navigation }: Props) {
   const ultimoAutoMessageIdRef = useRef<string | null>(null);
   const agenteAtivadoAgoraRef = useRef(false);
 
-  // Tracking de uso da varinha magica
-  const { usada: varinhaUsada, marcarUsada: marcarVarinhaUsada } = useFeatureUsada('varinha_magica');
-  const [showConfetti, setShowConfetti] = useState(false);
+  // Estado para sugestoes inline (substitui navegacao para SuggestionsScreen)
+  const [showInlineSuggestions, setShowInlineSuggestions] = useState(false);
+  const [inlineSuggestionsLoading, setInlineSuggestionsLoading] = useState(false);
+  const [inlineOpcoes, setInlineOpcoes] = useState<OpcaoArquetipo[]>([]);
+  const [inlineAnalise, setInlineAnalise] = useState<string | undefined>();
+  const [inlineConfianca, setInlineConfianca] = useState<number | undefined>();
+
+  // Feature 8: Quick Replies - mostra quando tem mensagem recebida e nao esta digitando
+  const [showQuickReplies, setShowQuickReplies] = useState(false);
+
+  // Feature 3: Smart Compose
+  const [showSmartCompose, setShowSmartCompose] = useState(false);
+
 
   const normalizarConfianca = (valor?: number) => {
     if (typeof valor !== 'number') {
@@ -252,13 +258,36 @@ export default function ChatScreen({ route, navigation }: Props) {
     }
   }, [jid, isNearBottom, offset, atualizarHasMore, scrollToBottom]);
 
-  const { isConnected, watchConversation, unwatchConversation } = useWebSocket({
+  const { isConnected, lastError, reconnectAttempts, watchConversation, unwatchConversation, reconnect } = useWebSocket({
     onNewMessage: useCallback((mensagemJid: string, mensagem: any) => {
       if (mensagemJid !== jid) return;
       setMensagens((prev) => {
+        // Check if message already exists by real message_id
         if (prev.some((m) => m.message_id === mensagem.message_id)) {
           return prev;
         }
+
+        // Check for optimistic message match (same content, sent within 30s)
+        // This handles deduplication when server echoes back our sent message
+        const msgTime = mensagem.data_hora ? new Date(mensagem.data_hora).getTime() : Date.now();
+        const isOutgoing = mensagem.direcao === 'enviada';
+
+        if (isOutgoing) {
+          const optimisticMatch = prev.findIndex((m) => {
+            if (!m.message_id.startsWith('sent_')) return false;
+            if (m.conteudo !== mensagem.conteudo) return false;
+            const mTime = m.data_hora ? new Date(m.data_hora).getTime() : 0;
+            return Math.abs(msgTime - mTime) < 30000; // Within 30 seconds
+          });
+
+          if (optimisticMatch !== -1) {
+            // Replace optimistic message with real one
+            const updated = [...prev];
+            updated[optimisticMatch] = mensagem;
+            return updated;
+          }
+        }
+
         const merged = [...prev, mensagem];
         merged.sort((a, b) => {
           const aTime = a.data_hora ? new Date(a.data_hora).getTime() : 0;
@@ -412,10 +441,6 @@ export default function ChatScreen({ route, navigation }: Props) {
       setSugestao(null);
       setOpcaoSelecionada(0);
 
-      // Confetti celebration!
-      setShowConfetti(true);
-      setTimeout(() => setShowConfetti(false), 3000);
-
       if (isNearBottom) {
         setTimeout(() => scrollToBottom(true), 100);
       }
@@ -457,6 +482,12 @@ export default function ChatScreen({ route, navigation }: Props) {
     }
 
     autoRespondendoRef.current = true;
+
+    // Mostra sugestao inline
+    setShowInlineSuggestions(true);
+    setInlineSuggestionsLoading(true);
+    setInlineOpcoes([]);
+
     try {
       const instrucaoProativa = 'Seja direto, puxe assunto e avance a conversa com proposta clara.';
       const mensagemContextoBase = contextoExtra || mensagemBase?.conteudo || '';
@@ -465,17 +496,30 @@ export default function ChatScreen({ route, navigation }: Props) {
         : instrucaoProativa;
       const resposta = await agentesApi.gerarResposta(jid, mensagemContexto);
       const mensagensGeradas = resposta.sugestao?.mensagens || [];
+
       if (mensagensGeradas.length > 0) {
-        await enviarMensagensEmSequencia(mensagensGeradas, false);
-        await registrarEnvioAgente(true);
+        setInlineOpcoes([{
+          tipo: agente?.tipo || 'agente',
+          icone: agente?.tipo_info?.icone || '🎯',
+          nome: agente?.tipo_info?.nome || 'Agente',
+          descricao: resposta.sugestao?.estrategia || '',
+          mensagens: mensagensGeradas,
+        }]);
+        setInlineConfianca(normalizarConfianca(resposta.sugestao?.confianca));
+      } else {
+        setShowInlineSuggestions(false);
+        autoRespondendoRef.current = false;
       }
+
       ultimoAutoMessageIdRef.current = baseKey;
     } catch (error) {
       console.error('Erro ao responder com agente:', error);
-    } finally {
+      setShowInlineSuggestions(false);
       autoRespondendoRef.current = false;
+    } finally {
+      setInlineSuggestionsLoading(false);
     }
-  }, [agenteAutoAtivo, jid, enviarMensagensEmSequencia, registrarEnvioAgente]);
+  }, [agenteAutoAtivo, jid, agente]);
 
   useEffect(() => {
     if (!agenteAutoAtivo) {
@@ -514,6 +558,21 @@ export default function ChatScreen({ route, navigation }: Props) {
     }
   }, [agenteAutoAtivo, mensagens, responderComAgente]);
 
+  // Feature 8: Quick Replies - mostra quando ultima mensagem foi recebida
+  useEffect(() => {
+    if (mensagens.length === 0) return;
+    const ultimaMensagem = mensagens[mensagens.length - 1];
+    const deveExibir = ultimaMensagem?.direcao === 'recebida' && !showInlineSuggestions && !agente;
+    setShowQuickReplies(deveExibir);
+  }, [mensagens, showInlineSuggestions, agente]);
+
+  // Esconde quick replies quando usuario comeca a digitar
+  useEffect(() => {
+    if (texto.length > 0) {
+      setShowQuickReplies(false);
+    }
+  }, [texto]);
+
   // Envia todas as mensagens sugeridas em sequência (formato simples)
   const enviarTodasSugestoes = async () => {
     if (!sugestao) {
@@ -551,13 +610,16 @@ export default function ChatScreen({ route, navigation }: Props) {
 
   const solicitarSugestao = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    // Marca feature como usada
-    if (!varinhaUsada) {
-      marcarVarinhaUsada();
-    }
-    // Se tem agente ativo, usa sugestão do agente
+
+    // Mostra painel inline e inicia loading
+    setShowInlineSuggestions(true);
+    setInlineSuggestionsLoading(true);
+    setInlineOpcoes([]);
+    setInlineAnalise(undefined);
+    setInlineConfianca(undefined);
+
+    // Se tem agente ativo, usa sugestao do agente
     if (agente && agente.status === 'ativo') {
-      setGerandoSugestaoAgente(true);
       try {
         // Pega a ultima mensagem recebida
         const ultimaRecebida = mensagens.filter(m => m.direcao === 'recebida').pop();
@@ -565,23 +627,19 @@ export default function ChatScreen({ route, navigation }: Props) {
 
         const resposta = await agentesApi.gerarResposta(jid, mensagemContexto);
         const confiancaTexto = formatarConfiancaPercentual(resposta.sugestao.confianca);
-        setSugestaoAgente(resposta.sugestao);
-        // Converte para formato de sugestao normal para reutilizar o mesmo componente
-        setSugestao({
-          formato: 'simples',
+
+        // Mostra sugestoes inline
+        setInlineOpcoes([{
+          tipo: agente.tipo,
+          icone: agente.tipo_info?.icone || '🎯',
+          nome: `${agente.tipo_info?.nome || 'Agente'}${confiancaTexto ? ` (${confiancaTexto})` : ''}`,
+          descricao: resposta.sugestao.estrategia,
           mensagens: resposta.sugestao.mensagens,
-          texto_unico: resposta.sugestao.mensagens.join(' | '),
-          confianca: normalizarConfianca(resposta.sugestao.confianca),
-          opcoes: [{
-            tipo: agente.tipo,
-            icone: agente.tipo_info?.icone || '🎯',
-            nome: `${agente.tipo_info?.nome || 'Agente'}${confiancaTexto ? ` (${confiancaTexto})` : ''}`,
-            descricao: resposta.sugestao.estrategia,
-            mensagens: resposta.sugestao.mensagens,
-          }],
-          analise: resposta.sugestao.analise,
-        });
+        }]);
+        setInlineAnalise(resposta.sugestao.analise);
+        setInlineConfianca(normalizarConfianca(resposta.sugestao.confianca));
       } catch (error) {
+        setShowInlineSuggestions(false);
         Alert.alert(
           'Sugestao indisponivel',
           'O agente nao conseguiu gerar uma resposta agora. Isso pode acontecer quando:\n\n• A conexao esta instavel\n• O servidor esta ocupado\n\nTente novamente em alguns segundos.',
@@ -591,18 +649,25 @@ export default function ChatScreen({ route, navigation }: Props) {
           ]
         );
       } finally {
-        setGerandoSugestaoAgente(false);
+        setInlineSuggestionsLoading(false);
       }
     } else {
       // Sugestao normal
-      setSugerindo(true);
       try {
         const resposta = await conversasApi.sugerir(jid);
-        setSugestao({
-          ...resposta,
-          confianca: normalizarConfianca(resposta.confianca),
-        });
+
+        // Mostra sugestoes inline
+        setInlineOpcoes(resposta.opcoes || [{
+          tipo: 'default',
+          icone: '💬',
+          nome: 'Sugestao',
+          descricao: 'Resposta sugerida pela IA',
+          mensagens: resposta.mensagens,
+        }]);
+        setInlineAnalise(resposta.analise);
+        setInlineConfianca(normalizarConfianca(resposta.confianca));
       } catch (error) {
+        setShowInlineSuggestions(false);
         Alert.alert(
           'Sugestao indisponivel',
           'Nao foi possivel gerar uma sugestao neste momento.\n\nDica: verifique se ha mensagens recentes na conversa para a IA analisar.',
@@ -612,9 +677,26 @@ export default function ChatScreen({ route, navigation }: Props) {
           ]
         );
       } finally {
-        setSugerindo(false);
+        setInlineSuggestionsLoading(false);
       }
     }
+  };
+
+  // Handler para enviar sugestao inline
+  const handleSendInlineSuggestion = async (mensagensParaEnviar: string[]) => {
+    setShowInlineSuggestions(false);
+    autoRespondendoRef.current = false;
+    await enviarMensagensEmSequencia(mensagensParaEnviar, false);
+    if (agente) {
+      await registrarEnvioAgente(true);
+    }
+  };
+
+  // Handler para cancelar sugestao inline
+  const handleCancelInlineSuggestion = () => {
+    setShowInlineSuggestions(false);
+    setInlineOpcoes([]);
+    autoRespondendoRef.current = false;
   };
 
   const formatarHora = (dataHora: string | null): string => {
@@ -698,12 +780,38 @@ export default function ChatScreen({ route, navigation }: Props) {
     >
       {!isOnline && (
         <View style={styles.statusBannerOffline}>
-          <Text style={styles.statusBannerText}>Sem conexão • mostrando cache</Text>
+          <Text style={styles.statusBannerText}>Sem conexao - mostrando cache</Text>
         </View>
       )}
       {isOnline && !isConnected && (
         <View style={styles.statusBannerWarning}>
-          <Text style={styles.statusBannerText}>Tempo real pausado • usando sincronização</Text>
+          <View style={styles.statusBannerContent}>
+            <View style={styles.statusBannerTextContainer}>
+              <Text style={styles.statusBannerText}>
+                {lastError?.code === 4003
+                  ? 'Erro de autenticacao WS'
+                  : lastError?.code === 4001
+                  ? 'Device ID invalido'
+                  : reconnectAttempts > 0
+                  ? `Reconectando... (${reconnectAttempts})`
+                  : 'Tempo real pausado'}
+              </Text>
+              {lastError && (
+                <Text style={styles.statusBannerSubtext}>
+                  {lastError.reason || lastError.message}
+                </Text>
+              )}
+            </View>
+            <TouchableOpacity
+              style={styles.statusBannerButton}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                reconnect();
+              }}
+            >
+              <Text style={styles.statusBannerButtonText}>Reconectar</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       )}
       {/* Badge do agente ativo */}
@@ -747,160 +855,26 @@ export default function ChatScreen({ route, navigation }: Props) {
         }
       />
 
-      {/* Sugestão da IA - Arquetipos psicológicos */}
-      {sugestao && (
-        <GlassCard style={styles.sugestaoContainer} intensity={25}>
-          {/* Header com análise e emoção detectada */}
-          {sugestao.formato === 'arquetipos' && (sugestao.analise || sugestao.emocao) && (
-            <View style={styles.analiseHeader}>
-              {sugestao.emocao && (
-                <View style={styles.emocaoBadge}>
-                  <Text style={styles.emocaoTexto}>
-                    {sugestao.emocao === 'feliz' ? '😊' :
-                     sugestao.emocao === 'triste' ? '😢' :
-                     sugestao.emocao === 'ansioso' ? '😰' :
-                     sugestao.emocao === 'irritado' ? '😤' :
-                     sugestao.emocao === 'neutro' ? '😐' : '🤔'} {sugestao.emocao}
-                  </Text>
-                </View>
-              )}
-              {sugestao.analise && (
-                <Text style={styles.analiseTexto} numberOfLines={2}>
-                  {sugestao.analise}
-                </Text>
-              )}
-            </View>
-          )}
+      {/* Sugestoes Inline (expande acima do input) */}
+      <InlineSuggestions
+        visible={showInlineSuggestions}
+        loading={inlineSuggestionsLoading}
+        opcoes={inlineOpcoes}
+        analise={inlineAnalise}
+        confianca={inlineConfianca}
+        onSend={handleSendInlineSuggestion}
+        onCancel={handleCancelInlineSuggestion}
+      />
 
-          {/* Indicador de confiança */}
-          {sugestao.confianca !== undefined && (
-            <AnimatedConfidenceBar confidence={sugestao.confianca} />
-          )}
-
-          {/* Aviso de baixa confiança */}
-          {sugestao.confianca !== undefined && sugestao.confianca < 0.6 && (
-            <View style={styles.avisoConfianca}>
-              <Text style={styles.avisoConfiancaTexto}>
-                ⚠️ A IA não tem certeza. Revise antes de enviar.
-              </Text>
-            </View>
-          )}
-
-          {/* Opções de arquétipos */}
-          {sugestao.formato === 'arquetipos' && sugestao.opcoes && sugestao.opcoes.length > 0 ? (
-            <>
-              <Text style={styles.sugestaoLabel}>Escolha o tom da resposta:</Text>
-              <View style={styles.arquetiposGrid}>
-                {sugestao.opcoes.map((opcao, index) => (
-                  <InteractiveArchetypeCard
-                    key={opcao.tipo}
-                    icon={opcao.icone}
-                    name={opcao.nome}
-                    description={opcao.descricao}
-                    isSelected={opcaoSelecionada === index}
-                    onPress={() => setOpcaoSelecionada(index)}
-                  />
-                ))}
-              </View>
-
-              {/* Preview das mensagens do arquétipo selecionado */}
-              {sugestao.opcoes?.[opcaoSelecionada]?.mensagens && sugestao.opcoes[opcaoSelecionada].mensagens.length > 0 ? (
-                <View style={styles.sugestaoMensagens}>
-                  <Text style={styles.previewLabel}>
-                    Prévia ({sugestao.opcoes[opcaoSelecionada].mensagens.length} mensagens):
-                  </Text>
-                  <ScrollView style={styles.previewScroll} nestedScrollEnabled>
-                    {sugestao.opcoes[opcaoSelecionada].mensagens.map((msg, index) => (
-                      <TypingMessage
-                        key={index}
-                        message={msg}
-                        delay={index * 200}
-                        speed={20}
-                      />
-                    ))}
-                  </ScrollView>
-                </View>
-              ) : (
-                <View style={styles.sugestaoMensagens}>
-                  <Text style={[styles.previewLabel, { color: '#FF6B6B' }]}>
-                    Sem mensagens para esta opcao. Selecione outra.
-                  </Text>
-                </View>
-              )}
-
-              <View style={styles.sugestaoBotoes}>
-                <TouchableOpacity
-                  style={[styles.sugestaoBotao, styles.sugestaoBotaoEnviar]}
-                  onPress={() => {
-                    const opcao = sugestao.opcoes?.[opcaoSelecionada];
-                    if (!opcao || !opcao.mensagens || opcao.mensagens.length === 0) {
-                      Alert.alert('Erro', 'Esta opcao nao contem mensagens. Selecione outra ou gere novamente.');
-                      return;
-                    }
-                    enviarMensagensEmSequencia(opcao.mensagens);
-                  }}
-                  disabled={enviando}
-                >
-                  <Text style={styles.sugestaoBotaoTexto}>
-                    {enviando ? 'Enviando...' : `Enviar ${sugestao.opcoes?.[opcaoSelecionada]?.nome || ''}`}
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.sugestaoBotao, styles.sugestaoBotaoDescartar]}
-                  onPress={() => { setSugestao(null); setOpcaoSelecionada(0); }}
-                >
-                  <Text style={styles.sugestaoBotaoTextoDescartar}>✕</Text>
-                </TouchableOpacity>
-              </View>
-            </>
-          ) : (
-            /* Fallback para formato simples */
-            <>
-              <Text style={styles.sugestaoLabel}>
-                Sugestão ({sugestao.mensagens?.length || 0} {(sugestao.mensagens?.length || 0) === 1 ? 'msg' : 'msgs'}):
-              </Text>
-              <View style={styles.sugestaoMensagens}>
-                {sugestao.mensagens && sugestao.mensagens.length > 0 ? (
-                  sugestao.mensagens.map((msg, index) => (
-                    <View key={index} style={styles.sugestaoMsgItem}>
-                      <View style={styles.sugestaoMsgBalao}>
-                        <Text style={styles.sugestaoMsgTexto}>{msg}</Text>
-                      </View>
-                      <TouchableOpacity
-                        style={styles.sugestaoMsgRemover}
-                        onPress={() => removerSugestao(index)}
-                      >
-                        <Text style={styles.sugestaoMsgRemoverTexto}>✕</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ))
-                ) : (
-                  <Text style={[styles.previewLabel, { color: '#FF6B6B' }]}>
-                    Erro ao gerar sugestao. Tente novamente.
-                  </Text>
-                )}
-              </View>
-              <View style={styles.sugestaoBotoes}>
-                <TouchableOpacity
-                  style={[styles.sugestaoBotao, styles.sugestaoBotaoEnviar]}
-                  onPress={enviarTodasSugestoes}
-                  disabled={enviando}
-                >
-                  <Text style={styles.sugestaoBotaoTexto}>
-                    {enviando ? 'Enviando...' : 'Enviar'}
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.sugestaoBotao, styles.sugestaoBotaoDescartar]}
-                  onPress={() => setSugestao(null)}
-                >
-                  <Text style={styles.sugestaoBotaoTextoDescartar}>✕</Text>
-                </TouchableOpacity>
-              </View>
-            </>
-          )}
-        </GlassCard>
-      )}
+      {/* Feature 8: Quick Reply Chips */}
+      <QuickReplyChips
+        jid={jid}
+        visible={showQuickReplies}
+        onSelectReply={(reply) => {
+          setTexto(reply);
+          setShowQuickReplies(false);
+        }}
+      />
 
       {/* Input */}
       <View style={styles.inputContainer}>
@@ -914,26 +888,34 @@ export default function ChatScreen({ route, navigation }: Props) {
           maxLength={4096}
         />
 
-        {/* Botão Sugerir (varinha mágica ou agente) */}
-        <PulsingHighlight ativo={!varinhaUsada && !sugerindo && !gerandoSugestaoAgente}>
-          <TouchableOpacity
-            style={[
-              styles.sugerirBotao,
-              agente && agente.status === 'ativo' && styles.sugerirBotaoAgente,
-              !varinhaUsada && styles.sugerirBotaoDestaque,
-            ]}
-            onPress={solicitarSugestao}
-            disabled={sugerindo || gerandoSugestaoAgente}
-          >
-            {sugerindo || gerandoSugestaoAgente ? (
-              <ActivityIndicator size="small" color={colors.iaAccent} />
-            ) : (
-              <Text style={styles.sugerirIcone}>
-                {agente && agente.status === 'ativo' ? (agente.tipo_info?.icone || '🎯') : '🪄'}
-              </Text>
-            )}
-          </TouchableOpacity>
-        </PulsingHighlight>
+        {/* Botao Smart Compose (Feature 3) */}
+        <TouchableOpacity
+          style={styles.composeButton}
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            setShowSmartCompose(true);
+          }}
+        >
+          <Text style={styles.composeButtonText}>✨</Text>
+        </TouchableOpacity>
+
+        {/* Botao Sugerir (varinha magica ou agente) */}
+        <TouchableOpacity
+          style={[
+            styles.sugerirBotao,
+            agente && agente.status === 'ativo' && styles.sugerirBotaoAgente,
+          ]}
+          onPress={solicitarSugestao}
+          disabled={sugerindo || gerandoSugestaoAgente}
+        >
+          {sugerindo || gerandoSugestaoAgente ? (
+            <ActivityIndicator size="small" color={colors.iaAccent} />
+          ) : (
+            <Text style={styles.sugerirIcone}>
+              {agente && agente.status === 'ativo' ? (agente.tipo_info?.icone || '🎯') : '🪄'}
+            </Text>
+          )}
+        </TouchableOpacity>
 
         {/* Botão Enviar */}
         <TouchableOpacity
@@ -967,17 +949,15 @@ export default function ChatScreen({ route, navigation }: Props) {
         }}
       />
 
-      {/* Confetti celebration */}
-      {showConfetti && <Confetti count={20} />}
-
-      {/* Tooltip de onboarding para a varinha mágica */}
-      <TooltipOnboarding
-        id="chat_varinha_v2"
-        mensagem="Toque na varinha magica para a IA sugerir respostas com diferentes tons!"
-        icone="🪄"
-        posicao="top"
-        maxExibicoes={3}
-        delayMs={1500}
+      {/* Feature 3: Smart Compose Modal */}
+      <SmartComposePreview
+        jid={jid}
+        visible={showSmartCompose}
+        onClose={() => setShowSmartCompose(false)}
+        onSelectMessage={(mensagem) => {
+          setTexto(mensagem);
+          setShowSmartCompose(false);
+        }}
       />
     </KeyboardAvoidingView>
   );
@@ -1017,7 +997,32 @@ const styles = StyleSheet.create({
   statusBannerText: {
     color: colors.textSecondary,
     fontSize: fontSize.xs,
-    textAlign: 'center',
+  },
+  statusBannerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  statusBannerTextContainer: {
+    flex: 1,
+  },
+  statusBannerSubtext: {
+    color: colors.textSecondary,
+    fontSize: fontSize.xs - 1,
+    marginTop: 2,
+    opacity: 0.8,
+  },
+  statusBannerButton: {
+    backgroundColor: colors.primary,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: borderRadius.sm,
+    marginLeft: spacing.sm,
+  },
+  statusBannerButtonText: {
+    color: colors.textLight,
+    fontSize: fontSize.xs,
+    fontWeight: '600',
   },
   listContent: {
     padding: spacing.md,
@@ -1294,6 +1299,18 @@ const styles = StyleSheet.create({
     maxHeight: 100,
     marginRight: spacing.sm,
   },
+  composeButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#E3F2FD',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: spacing.xs,
+  },
+  composeButtonText: {
+    fontSize: 16,
+  },
   sugerirBotao: {
     width: 44,
     height: 44,
@@ -1307,14 +1324,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.iaAccentLight,
     borderWidth: 2,
     borderColor: colors.iaAccent,
-  },
-  sugerirBotaoDestaque: {
-    backgroundColor: colors.iaAccent,
-    shadowColor: colors.iaAccent,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.5,
-    shadowRadius: 8,
-    elevation: 8,
   },
   sugerirIcone: {
     fontSize: 22,
@@ -1333,5 +1342,109 @@ const styles = StyleSheet.create({
   enviarIcone: {
     fontSize: 20,
     color: colors.textLight,
+  },
+  // Modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: colors.background,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: '80%',
+    paddingBottom: Platform.OS === 'ios' ? 34 : 16,
+  },
+  modalHandle: {
+    width: 40,
+    height: 4,
+    backgroundColor: colors.textSecondary,
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginTop: 12,
+    marginBottom: 8,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  modalTitle: {
+    fontSize: fontSize.lg,
+    fontWeight: '600',
+    color: colors.iaAccent,
+  },
+  modalCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: colors.inputBackground,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalCloseBtnText: {
+    fontSize: 16,
+    color: colors.textSecondary,
+  },
+  modalScroll: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+  },
+  modalFooter: {
+    flexDirection: 'row',
+    gap: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  modalBtnPrimary: {
+    flex: 1,
+    backgroundColor: colors.secondary,
+    paddingVertical: spacing.md,
+    borderRadius: borderRadius.md,
+    alignItems: 'center',
+  },
+  modalBtnPrimaryText: {
+    color: colors.textLight,
+    fontSize: fontSize.md,
+    fontWeight: '600',
+  },
+  modalBtnSecondary: {
+    flex: 1,
+    backgroundColor: colors.inputBackground,
+    paddingVertical: spacing.md,
+    borderRadius: borderRadius.md,
+    alignItems: 'center',
+  },
+  modalBtnSecondaryText: {
+    color: colors.textSecondary,
+    fontSize: fontSize.md,
+    fontWeight: '500',
+  },
+  modalBtnDisabled: {
+    opacity: 0.5,
+  },
+  previewContainer: {
+    marginTop: spacing.md,
+  },
+  previewMsgBalao: {
+    backgroundColor: colors.bubbleSent,
+    padding: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: borderRadius.bubble,
+    borderTopRightRadius: 0,
+    marginTop: spacing.xs,
+    alignSelf: 'flex-end',
+    maxWidth: '85%',
+  },
+  previewMsgTexto: {
+    fontSize: fontSize.md,
+    color: colors.textPrimary,
   },
 });

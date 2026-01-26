@@ -14,14 +14,15 @@ import {
   Image,
   Alert,
 } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { colors, spacing, fontSize, borderRadius } from '../theme/whatsapp';
-import { conversasApi, syncApi, agentesApi, acoesApi, Conversa, AgenteMissao, AcaoPrioritaria } from '../services/api';
+import { conversasApi, syncApi, agentesApi, Conversa, AgenteMissao } from '../services/api';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { loadCachedConversations, saveCachedConversations } from '../services/cache';
 import { useConnectivity } from '../hooks/useConnectivity';
 import AtivarAgenteModal from '../components/AtivarAgenteModal';
-import CardAcaoPrioritaria from '../components/CardAcaoPrioritaria';
-import TooltipOnboarding from '../components/TooltipOnboarding';
+import PrioritySection from '../components/PrioritySection';
+import MoodAlertBanner from '../components/MoodAlert';
 
 interface Props {
   navigation: any;
@@ -38,6 +39,68 @@ const FILTROS: { id: Filtro; label: string; icone: string }[] = [
   { id: 'negocios', label: 'Negócios', icone: '💰' },
 ];
 
+// Status inteligentes para agrupamento
+type StatusConversa = 'precisa_responder' | 'aguardando' | 'em_dia';
+
+interface GrupoStatus {
+  id: StatusConversa;
+  titulo: string;
+  icone: string;
+  cor: string;
+  descricao: string;
+}
+
+const GRUPOS_STATUS: GrupoStatus[] = [
+  {
+    id: 'precisa_responder',
+    titulo: 'Precisa responder',
+    icone: '🔴',
+    cor: '#FFE8E8',
+    descricao: 'Conversas aguardando sua resposta',
+  },
+  {
+    id: 'aguardando',
+    titulo: 'Aguardando resposta',
+    icone: '🟡',
+    cor: '#FFF9E6',
+    descricao: 'Voce ja respondeu, aguardando retorno',
+  },
+  {
+    id: 'em_dia',
+    titulo: 'Em dia',
+    icone: '🟢',
+    cor: '#E8F5E9',
+    descricao: 'Conversas em dia',
+  },
+];
+
+// Funcao para classificar conversa por status
+const classificarStatus = (conversa: Conversa): StatusConversa => {
+  if (!conversa.ultima_mensagem) return 'em_dia';
+
+  const ultimaDirecao = conversa.ultima_mensagem.direcao;
+  const ultimaData = conversa.ultima_mensagem.data_hora
+    ? new Date(conversa.ultima_mensagem.data_hora)
+    : null;
+  const agora = new Date();
+  const horasSemResposta = ultimaData
+    ? (agora.getTime() - ultimaData.getTime()) / (1000 * 60 * 60)
+    : 0;
+
+  // Se ultima foi recebida, precisa responder
+  if (ultimaDirecao === 'recebida') {
+    return 'precisa_responder';
+  }
+
+  // Se ultima foi enviada ha mais de 24h, considera em dia
+  if (horasSemResposta > 24) {
+    return 'em_dia';
+  }
+
+  // Se ultima foi enviada recentemente, aguardando
+  return 'aguardando';
+};
+
 export default function ConversasScreen({ navigation }: Props) {
   const [conversas, setConversas] = useState<Conversa[]>([]);
   const [loading, setLoading] = useState(true);
@@ -52,9 +115,42 @@ export default function ConversasScreen({ navigation }: Props) {
   const [agenteAtivo, setAgenteAtivo] = useState<AgenteMissao | null>(null);
   const [agentesAtivos, setAgentesAtivos] = useState<Map<string, AgenteMissao>>(new Map());
 
-  // Estado das ações prioritárias
-  const [acaoPrioritaria, setAcaoPrioritaria] = useState<AcaoPrioritaria | null>(null);
-  const [acaoDismissed, setAcaoDismissed] = useState(false);
+  // Filtros visiveis (escondido por padrao estilo WhatsApp)
+  const [mostrarFiltros, setMostrarFiltros] = useState(false);
+
+  // Agrupamento por status
+  const [mostrarGrupos, setMostrarGrupos] = useState(true);
+  const [gruposColapsados, setGruposColapsados] = useState<Set<StatusConversa>>(new Set(['em_dia']));
+
+  // Agrupa conversas por status
+  const conversasAgrupadas = React.useMemo(() => {
+    const grupos: Record<StatusConversa, Conversa[]> = {
+      precisa_responder: [],
+      aguardando: [],
+      em_dia: [],
+    };
+
+    conversas.forEach(conversa => {
+      const status = classificarStatus(conversa);
+      grupos[status].push(conversa);
+    });
+
+    return grupos;
+  }, [conversas]);
+
+  // Toggle colapso de grupo
+  const toggleGrupo = (status: StatusConversa) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setGruposColapsados(prev => {
+      const novo = new Set(prev);
+      if (novo.has(status)) {
+        novo.delete(status);
+      } else {
+        novo.add(status);
+      }
+      return novo;
+    });
+  };
 
   const carregarConversas = useCallback(async (filtro?: Filtro) => {
     try {
@@ -94,25 +190,9 @@ export default function ConversasScreen({ navigation }: Props) {
     }
   }, []);
 
-  // Carrega ação prioritária
-  const carregarAcaoPrioritaria = useCallback(async () => {
-    if (acaoDismissed) return;
-    try {
-      const data = await acoesApi.listarPrioritarias(1);
-      if (data.acoes.length > 0) {
-        setAcaoPrioritaria(data.acoes[0]);
-      } else {
-        setAcaoPrioritaria(null);
-      }
-    } catch (error) {
-      console.error('Erro ao carregar ações:', error);
-    }
-  }, [acaoDismissed]);
-
   // Abre modal para ativar/editar agente
   const abrirModalAgente = async (conversa: Conversa) => {
     setConversaSelecionada(conversa);
-    // Verifica se ja tem agente ativo
     const agente = agentesAtivos.get(conversa.jid) || null;
     setAgenteAtivo(agente);
     setModalAgenteVisivel(true);
@@ -132,7 +212,7 @@ export default function ConversasScreen({ navigation }: Props) {
   };
 
   // WebSocket para atualizações em tempo real
-  const { isConnected } = useWebSocket({
+  const { isConnected, lastError, reconnectAttempts, reconnect } = useWebSocket({
     onNewMessage: useCallback((jid: string, mensagem: any) => {
       // Atualiza a conversa com a nova mensagem
       setConversas(prev => {
@@ -161,6 +241,30 @@ export default function ConversasScreen({ navigation }: Props) {
         return updated;
       });
     }, [carregarConversas, filtroAtivo]),
+    onContactUpdated: useCallback((data: { jid: string; nome?: string; foto_url?: string }) => {
+      // Atualiza os dados do contato (nome, foto) na lista local
+      setConversas(prev => {
+        const index = prev.findIndex(c => c.jid === data.jid);
+        if (index === -1) {
+          // Contato não está na lista atual
+          return prev;
+        }
+
+        // Atualiza o contato com os novos dados
+        const updated = [...prev];
+        const conversa = { ...updated[index] };
+
+        if (data.nome !== undefined) {
+          conversa.nome = data.nome;
+        }
+        if (data.foto_url !== undefined) {
+          conversa.foto_url = data.foto_url;
+        }
+
+        updated[index] = conversa;
+        return updated;
+      });
+    }, []),
     onConnected: useCallback(() => {
       console.log('WebSocket conectado - tempo real ativo');
     }, []),
@@ -175,13 +279,11 @@ export default function ConversasScreen({ navigation }: Props) {
   useEffect(() => {
     carregarConversas(filtroAtivo);
     carregarAgentesAtivos();
-    carregarAcaoPrioritaria();
 
     // Polling somente como fallback quando WebSocket está offline
     if (!isConnected) {
       pollingRef.current = setInterval(() => {
         carregarConversas(filtroAtivo);
-        carregarAcaoPrioritaria();
       }, 10000);
     }
 
@@ -190,8 +292,6 @@ export default function ConversasScreen({ navigation }: Props) {
       if (appState.current.match(/inactive|background/) && nextAppState === 'active') {
         carregarConversas(filtroAtivo);
         carregarAgentesAtivos();
-        carregarAcaoPrioritaria();
-        setAcaoDismissed(false); // Reseta dismiss quando volta
       }
       appState.current = nextAppState;
     });
@@ -202,7 +302,7 @@ export default function ConversasScreen({ navigation }: Props) {
       }
       subscription.remove();
     };
-  }, [carregarConversas, carregarAgentesAtivos, carregarAcaoPrioritaria, filtroAtivo, isConnected]);
+  }, [carregarConversas, carregarAgentesAtivos, filtroAtivo, isConnected]);
 
   useEffect(() => {
     let isMounted = true;
@@ -246,7 +346,8 @@ export default function ConversasScreen({ navigation }: Props) {
                 'Sincronização Completa',
                 `📨 ${histResult.stats?.chats_processados || 0} conversas\n` +
                 `💬 ${histResult.stats?.mensagens_novas || 0} mensagens novas\n` +
-                `📷 ${fotoResult.atualizados || 0} fotos atualizadas`
+                `👤 ${fotoResult.nomes_atualizados || 0} nomes atualizados\n` +
+                `📷 ${fotoResult.fotos_atualizadas || 0} fotos atualizadas`
               );
             } catch (error) {
               console.error('Erro na sincronização:', error);
@@ -300,14 +401,41 @@ export default function ConversasScreen({ navigation }: Props) {
     return `${prefixo}${texto || ''}`;
   };
 
-  const renderFiltros = () => (
-    <View style={styles.filtrosWrapper}>
-      <View style={styles.filtrosRow}>
+  // Header compacto estilo WhatsApp
+  const renderHeader = () => (
+    <View style={styles.headerBar}>
+      <TouchableOpacity
+        style={styles.headerButton}
+        onPress={() => {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          setMostrarFiltros(!mostrarFiltros);
+        }}
+      >
+        <Text style={styles.headerButtonIcon}>{mostrarFiltros ? '✕' : '🏷️'}</Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={styles.headerButton}
+        onPress={sincronizarTudo}
+        disabled={syncing}
+      >
+        {syncing ? (
+          <ActivityIndicator size="small" color={colors.primary} />
+        ) : (
+          <Text style={styles.headerButtonIcon}>🔄</Text>
+        )}
+      </TouchableOpacity>
+    </View>
+  );
+
+  const renderFiltros = () => {
+    if (!mostrarFiltros) return null;
+
+    return (
+      <View style={styles.filtrosWrapper}>
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.filtrosContainer}
-          style={styles.filtrosScroll}
         >
           {FILTROS.map((filtro) => (
             <TouchableOpacity
@@ -332,26 +460,80 @@ export default function ConversasScreen({ navigation }: Props) {
             </TouchableOpacity>
           ))}
         </ScrollView>
-        <TouchableOpacity
-          style={styles.syncButton}
-          onPress={sincronizarTudo}
-          disabled={syncing}
-        >
-          {syncing ? (
-            <ActivityIndicator size="small" color={colors.primary} />
-          ) : (
-            <Text style={styles.syncIcon}>🔄</Text>
-          )}
-        </TouchableOpacity>
       </View>
-    </View>
-  );
+    );
+  };
 
-  const renderConversa = ({ item }: { item: Conversa }) => {
+  // Renderiza header de secao
+  const renderSectionHeader = (status: StatusConversa, count: number) => {
+    const grupo = GRUPOS_STATUS.find(g => g.id === status);
+    if (!grupo || count === 0) return null;
+
+    const isColapsado = gruposColapsados.has(status);
+
+    return (
+      <TouchableOpacity
+        style={[styles.sectionHeader, { backgroundColor: grupo.cor }]}
+        onPress={() => toggleGrupo(status)}
+        activeOpacity={0.7}
+      >
+        <View style={styles.sectionHeaderLeft}>
+          <Text style={styles.sectionHeaderIcone}>{grupo.icone}</Text>
+          <View>
+            <Text style={styles.sectionHeaderTitulo}>{grupo.titulo}</Text>
+            <Text style={styles.sectionHeaderCount}>
+              {count} {count === 1 ? 'conversa' : 'conversas'}
+            </Text>
+          </View>
+        </View>
+        <Text style={styles.sectionHeaderChevron}>
+          {isColapsado ? '▶' : '▼'}
+        </Text>
+      </TouchableOpacity>
+    );
+  };
+
+  // Dados para FlatList com secoes
+  type ListItem = { type: 'header'; status: StatusConversa; count: number } | { type: 'conversa'; data: Conversa };
+
+  const dadosAgrupados = React.useMemo((): ListItem[] => {
+    if (!mostrarGrupos || filtroAtivo !== 'todos') {
+      // Sem agrupamento - retorna conversas direto
+      return conversas.map(c => ({ type: 'conversa' as const, data: c }));
+    }
+
+    const items: ListItem[] = [];
+
+    GRUPOS_STATUS.forEach(grupo => {
+      const conversasDoGrupo = conversasAgrupadas[grupo.id];
+      if (conversasDoGrupo.length > 0) {
+        // Adiciona header
+        items.push({ type: 'header', status: grupo.id, count: conversasDoGrupo.length });
+
+        // Se nao colapsado, adiciona conversas
+        if (!gruposColapsados.has(grupo.id)) {
+          conversasDoGrupo.forEach(c => {
+            items.push({ type: 'conversa', data: c });
+          });
+        }
+      }
+    });
+
+    return items;
+  }, [conversas, conversasAgrupadas, mostrarGrupos, gruposColapsados, filtroAtivo]);
+
+  // Render item para FlatList com secoes
+  const renderItemAgrupado = ({ item }: { item: ListItem }) => {
+    if (item.type === 'header') {
+      return renderSectionHeader(item.status, item.count);
+    }
+    return renderConversaItem(item.data);
+  };
+
+  // Render de uma conversa individual - simplificado estilo WhatsApp
+  const renderConversaItem = (item: Conversa) => {
     const agenteConversa = agentesAtivos.get(item.jid);
-    // Verifica se está aguardando resposta (última msg foi recebida)
     const aguardandoResposta = item.ultima_mensagem?.direcao === 'recebida';
-    // Calcula tempo sem resposta
     const tempoSemResposta = item.ultima_mensagem?.data_hora
       ? Math.floor((Date.now() - new Date(item.ultima_mensagem.data_hora).getTime()) / (1000 * 60 * 60))
       : 0;
@@ -361,7 +543,6 @@ export default function ConversasScreen({ navigation }: Props) {
       <TouchableOpacity
         style={[
           styles.conversaItem,
-          agenteConversa && styles.conversaComAgente,
           urgente && styles.conversaUrgente,
         ]}
         onPress={() => navigation.navigate('Chat', { jid: item.jid, nome: item.nome })}
@@ -382,15 +563,18 @@ export default function ConversasScreen({ navigation }: Props) {
               </Text>
             </View>
           )}
-          {/* Indicador de agente ativo no avatar */}
+          {/* Badge de agente ativo (icone + dot de status) */}
           {agenteConversa && (
-            <View style={styles.agenteBadge}>
+            <View style={[
+              styles.agenteBadge,
+              agenteConversa.status === 'ativo' ? styles.agenteBadgeAtivo : styles.agenteBadgePausado
+            ]}>
               <Text style={styles.agenteBadgeIcone}>
                 {agenteConversa.tipo_info?.icone || '🎯'}
               </Text>
             </View>
           )}
-          {/* Indicador de aguardando resposta */}
+          {/* Indicador de aguardando resposta (quando sem agente) */}
           {!agenteConversa && aguardandoResposta && (
             <View style={[styles.aguardandoBadge, urgente && styles.aguardandoUrgente]}>
               <Text style={styles.aguardandoTexto}>{urgente ? '!' : '•'}</Text>
@@ -404,25 +588,23 @@ export default function ConversasScreen({ navigation }: Props) {
             <Text style={[styles.nome, urgente && styles.nomeUrgente]} numberOfLines={1}>
               {item.nome || item.jid.split('@')[0]}
             </Text>
-            <Text style={[styles.hora, urgente && styles.horaUrgente]}>
-              {formatarHora(item.ultima_mensagem?.data_hora || item.ultima_interacao)}
-            </Text>
+            <View style={styles.headerRight}>
+              {/* Dot de status do agente (sutil) */}
+              {agenteConversa && (
+                <View style={[
+                  styles.statusDot,
+                  agenteConversa.status === 'ativo' ? styles.statusDotGreen : styles.statusDotYellow
+                ]} />
+              )}
+              <Text style={[styles.hora, urgente && styles.horaUrgente]}>
+                {formatarHora(item.ultima_mensagem?.data_hora || item.ultima_interacao)}
+              </Text>
+            </View>
           </View>
           <View style={styles.mensagemRow}>
             <Text style={[styles.ultimaMensagem, aguardandoResposta && styles.msgRecebida]} numberOfLines={1}>
               {getUltimaMensagemTexto(item)}
             </Text>
-            {/* Indicadores sutis à direita */}
-            {agenteConversa && (
-              <View style={[
-                styles.indicadorAgente,
-                { backgroundColor: agenteConversa.status === 'ativo' ? colors.secondary : '#FFA500' }
-              ]}>
-                <Text style={styles.indicadorAgenteTexto}>
-                  {agenteConversa.status === 'ativo' ? 'Ativo' : 'Pausado'}
-                </Text>
-              </View>
-            )}
             {!agenteConversa && item.ia_automatica && <Text style={styles.indicadorIA}>✨</Text>}
             {item.prioridade === 2 && <Text style={styles.indicadorVIP}>⭐</Text>}
           </View>
@@ -444,19 +626,81 @@ export default function ConversasScreen({ navigation }: Props) {
       <View style={styles.container}>
         {!isOnline && (
           <View style={styles.statusBannerOffline}>
-            <Text style={styles.statusBannerText}>Sem conexão • mostrando cache</Text>
+            <Text style={styles.statusBannerText}>Sem conexao - mostrando cache</Text>
           </View>
         )}
         {isOnline && !isConnected && (
           <View style={styles.statusBannerWarning}>
-            <Text style={styles.statusBannerText}>Tempo real pausado • atualizando em segundo plano</Text>
+            <View style={styles.statusBannerContent}>
+              <View style={styles.statusBannerTextContainer}>
+                <Text style={styles.statusBannerText}>
+                  {lastError?.code === 4003
+                    ? 'Erro de autenticacao WS'
+                    : lastError?.code === 4001
+                    ? 'Device ID invalido'
+                    : reconnectAttempts > 0
+                    ? `Reconectando... (${reconnectAttempts})`
+                    : 'Tempo real pausado'}
+                </Text>
+                {lastError && (
+                  <Text style={styles.statusBannerSubtext}>
+                    {lastError.reason || lastError.message}
+                  </Text>
+                )}
+              </View>
+              <TouchableOpacity
+                style={styles.statusBannerButton}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  reconnect();
+                }}
+              >
+                <Text style={styles.statusBannerButtonText}>Reconectar</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         )}
+
+        {/* Header compacto com botoes de filtro e sync */}
+        {renderHeader()}
         {renderFiltros()}
+
+        {/* Toggle para mostrar/ocultar agrupamento */}
+        {filtroAtivo === 'todos' && (
+          <TouchableOpacity
+            style={styles.toggleGrupos}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              setMostrarGrupos(!mostrarGrupos);
+            }}
+          >
+            <Text style={styles.toggleGruposIcone}>
+              {mostrarGrupos ? '📊' : '📋'}
+            </Text>
+            <Text style={styles.toggleGruposTexto}>
+              {mostrarGrupos ? 'Por status' : 'Todas'}
+            </Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Feature 7: Smart Priority Queue - Responda Agora */}
+        <PrioritySection
+          visible={filtroAtivo === 'todos' && !mostrarGrupos}
+          onPressConversa={(jid, nome) => navigation.navigate('Chat', { jid, nome })}
+        />
+
+        {/* Feature 2: Mood Detection Alerts */}
+        <MoodAlertBanner
+          visible={filtroAtivo === 'todos'}
+          onPressAlerta={(jid, nome) => navigation.navigate('Chat', { jid, nome })}
+        />
+
         <FlatList
-          data={conversas}
-          keyExtractor={(item) => item.jid}
-          renderItem={renderConversa}
+          data={dadosAgrupados}
+          keyExtractor={(item, index) =>
+            item.type === 'header' ? `header-${item.status}` : item.data.jid
+          }
+          renderItem={renderItemAgrupado}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -465,24 +709,11 @@ export default function ConversasScreen({ navigation }: Props) {
               tintColor={colors.primary}
             />
           }
-          ItemSeparatorComponent={() => <View style={styles.separator} />}
+          ItemSeparatorComponent={({ leadingItem }) =>
+            leadingItem?.type === 'conversa' ? <View style={styles.separator} /> : null
+          }
           contentContainerStyle={styles.listContent}
           style={styles.flatList}
-          ListHeaderComponent={
-            acaoPrioritaria && !acaoDismissed ? (
-              <CardAcaoPrioritaria
-                acao={acaoPrioritaria}
-                onPress={() => {
-                  navigation.navigate('Chat', {
-                    jid: acaoPrioritaria.jid,
-                    nome: acaoPrioritaria.nome
-                  });
-                  setAcaoDismissed(true);
-                }}
-                onDismiss={() => setAcaoDismissed(true)}
-              />
-            ) : null
-          }
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
               <Text style={styles.emptyText}>
@@ -492,7 +723,7 @@ export default function ConversasScreen({ navigation }: Props) {
           }
         />
 
-        {/* Modal de ativar agente */}
+        {/* Modal de ativar agente (via long-press) */}
         <AtivarAgenteModal
           visible={modalAgenteVisivel}
           onClose={() => {
@@ -503,22 +734,6 @@ export default function ConversasScreen({ navigation }: Props) {
           nomeContato={conversaSelecionada?.nome || ''}
           agenteAtivo={agenteAtivo}
           onAgenteAtivado={handleAgenteAtivado}
-        />
-
-        {/* Tooltips de onboarding */}
-        <TooltipOnboarding
-          id="conversas_acoes"
-          mensagem="O card acima mostra quem precisa da sua atencao. Toque para responder!"
-          icone="💡"
-          posicao="bottom"
-        />
-        <TooltipOnboarding
-          id="conversas_longpress_v2"
-          mensagem="Segure uma conversa para ativar um agente de IA que responde por voce!"
-          icone="🎯"
-          posicao="bottom"
-          maxExibicoes={2}
-          delayMs={3000}
         />
       </View>
     </SafeAreaView>
@@ -542,6 +757,24 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: colors.background,
+  },
+  // Header compacto
+  headerBar: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    backgroundColor: colors.background,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.divider,
+    gap: spacing.sm,
+  },
+  headerButton: {
+    padding: spacing.sm,
+  },
+  headerButtonIcon: {
+    fontSize: 18,
   },
   // Filtros
   filtrosWrapper: {
@@ -644,6 +877,22 @@ const styles = StyleSheet.create({
     flex: 1,
     marginRight: spacing.sm,
   },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  statusDotGreen: {
+    backgroundColor: colors.secondary,
+  },
+  statusDotYellow: {
+    backgroundColor: '#FFA500',
+  },
   hora: {
     fontSize: fontSize.xs,
     color: colors.textTime,
@@ -697,18 +946,38 @@ const styles = StyleSheet.create({
   statusBannerText: {
     color: colors.textSecondary,
     fontSize: fontSize.xs,
-    textAlign: 'center',
   },
-  // Estilos para agentes
-  conversaComAgente: {
-    borderLeftWidth: 3,
-    borderLeftColor: colors.iaAccent,
+  statusBannerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
+  statusBannerTextContainer: {
+    flex: 1,
+  },
+  statusBannerSubtext: {
+    color: colors.textSecondary,
+    fontSize: fontSize.xs - 1,
+    marginTop: 2,
+    opacity: 0.8,
+  },
+  statusBannerButton: {
+    backgroundColor: colors.primary,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: borderRadius.sm,
+    marginLeft: spacing.sm,
+  },
+  statusBannerButtonText: {
+    color: colors.textLight,
+    fontSize: fontSize.xs,
+    fontWeight: '600',
+  },
+  // Estilos para agentes - badge sutil no avatar
   agenteBadge: {
     position: 'absolute',
     bottom: -2,
     right: -2,
-    backgroundColor: colors.iaAccentLight,
     borderRadius: 10,
     width: 20,
     height: 20,
@@ -717,19 +986,14 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: colors.background,
   },
+  agenteBadgeAtivo: {
+    backgroundColor: colors.secondary,
+  },
+  agenteBadgePausado: {
+    backgroundColor: '#FFA500',
+  },
   agenteBadgeIcone: {
     fontSize: 10,
-  },
-  indicadorAgente: {
-    paddingHorizontal: spacing.xs,
-    paddingVertical: 1,
-    borderRadius: borderRadius.sm,
-    marginLeft: spacing.xs,
-  },
-  indicadorAgenteTexto: {
-    fontSize: fontSize.xs,
-    color: colors.textLight,
-    fontWeight: '600',
   },
   // Estilos para indicadores de urgência
   conversaUrgente: {
@@ -768,5 +1032,55 @@ const styles = StyleSheet.create({
   msgRecebida: {
     color: colors.textPrimary,
     fontWeight: '500',
+  },
+  // Estilos para agrupamento por status
+  toggleGrupos: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    backgroundColor: colors.background,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.divider,
+  },
+  toggleGruposIcone: {
+    fontSize: 14,
+    marginRight: spacing.xs,
+  },
+  toggleGruposTexto: {
+    fontSize: fontSize.xs,
+    color: colors.textSecondary,
+    fontWeight: '500',
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.divider,
+  },
+  sectionHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  sectionHeaderIcone: {
+    fontSize: 18,
+  },
+  sectionHeaderTitulo: {
+    fontSize: fontSize.md,
+    fontWeight: '600',
+    color: colors.textPrimary,
+  },
+  sectionHeaderCount: {
+    fontSize: fontSize.xs,
+    color: colors.textSecondary,
+  },
+  sectionHeaderChevron: {
+    fontSize: fontSize.sm,
+    color: colors.textSecondary,
   },
 });

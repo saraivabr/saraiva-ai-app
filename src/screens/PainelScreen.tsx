@@ -146,7 +146,7 @@ export default function PainelScreen({ navigation }: any) {
         {/* Link para ranking */}
         <TouchableOpacity
           style={styles.linkCard}
-          onPress={() => navigation.navigate('Ranking')}
+          onPress={() => navigation.navigate('RelationshipDashboard')}
         >
           <Text style={styles.linkIcon}>*</Text>
           <Text style={styles.linkText}>Ver ranking de relacionamentos</Text>

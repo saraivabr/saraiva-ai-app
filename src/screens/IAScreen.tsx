@@ -12,9 +12,11 @@ import {
   SafeAreaView,
   useWindowDimensions,
 } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { colors, spacing, fontSize, borderRadius } from '../theme/whatsapp';
-import { iaApi } from '../services/api';
+import { iaApi, buscaApi, BuscaSemanticaResponse, VoiceActionResult } from '../services/api';
 import { useFeatureUsada } from '../components/TooltipOnboarding';
+import VoiceCommand from '../components/VoiceCommand';
 
 interface Mensagem {
   id: string;
@@ -24,11 +26,24 @@ interface Mensagem {
 }
 
 const PROMPTS_RAPIDOS = [
-  'Manda oi pro João',
-  'O que o Pedro disse?',
-  'Quem falou de reunião?',
+  'O que combinamos sobre o almoco?',
+  'Quando a Maria vai viajar?',
+  'Quem falou de reuniao?',
+  'O que tenho pendente?',
   'Resumo do dia',
 ];
+
+// Detecta se a pergunta e uma busca semantica
+const eBuscaSemantica = (texto: string): boolean => {
+  const lower = texto.toLowerCase();
+  const padroes = [
+    'o que', 'quando', 'quem', 'onde', 'como',
+    'me disse', 'falou sobre', 'mencionou',
+    'combinamos', 'marcamos', 'pendente',
+    'ultima vez', 'viagem', 'projeto', 'reuniao',
+  ];
+  return padroes.some(p => lower.includes(p));
+};
 
 export default function IAScreen() {
   const { width: screenWidth } = useWindowDimensions();
@@ -44,14 +59,44 @@ export default function IAScreen() {
   const [mensagens, setMensagens] = useState<Mensagem[]>([
     {
       id: '1',
-      texto: 'Olá! Sou o Saraiva.AI, seu assistente pessoal.\n\nPosso fazer várias coisas por você:\n\n📤 Enviar mensagens: "Manda oi pro João"\n📖 Ler conversas: "O que o Pedro disse?"\n🔍 Buscar: "Quem falou de reunião?"\n📝 Resumir: "Resume conversa com Maria"\n\nO que você precisa?',
+      texto: 'Olá! Sou o Saraiva.AI, seu assistente pessoal.\n\nPosso fazer várias coisas por você:\n\n📤 Enviar mensagens: "Manda oi pro João"\n📖 Ler conversas: "O que o Pedro disse?"\n🔍 Buscar: "Quem falou de reunião?"\n📝 Resumir: "Resume conversa com Maria"\n🎤 Use o microfone para comandos de voz!\n\nO que você precisa?',
       remetente: 'ia',
       hora: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
     },
   ]);
   const [texto, setTexto] = useState('');
   const [carregando, setCarregando] = useState(false);
+  const [showVoiceCommand, setShowVoiceCommand] = useState(false);
   const flatListRef = useRef<FlatList>(null);
+
+  // Handler para resultado do comando de voz
+  const handleVoiceAction = (result: VoiceActionResult) => {
+    const hora = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+
+    // Adiciona mensagem do usuario (comando)
+    const mensagemUsuario: Mensagem = {
+      id: Date.now().toString(),
+      texto: `🎤 Comando de voz executado`,
+      remetente: 'usuario',
+      hora,
+    };
+
+    // Formata resposta baseada no resultado
+    let respostaTexto = result.mensagem || result.confirmacao || result.resumo || 'Comando processado';
+    if (result.contato_nome) {
+      respostaTexto = `${result.contato_nome}: ${respostaTexto}`;
+    }
+
+    const mensagemIA: Mensagem = {
+      id: (Date.now() + 1).toString(),
+      texto: respostaTexto,
+      remetente: 'ia',
+      hora,
+    };
+
+    setMensagens(prev => [...prev, mensagemUsuario, mensagemIA]);
+    setTimeout(() => flatListRef.current?.scrollToEnd(), 100);
+  };
 
   const enviarPergunta = async (pergunta?: string) => {
     const textoEnviar = pergunta || texto;
@@ -71,7 +116,21 @@ export default function IAScreen() {
     setTimeout(() => flatListRef.current?.scrollToEnd(), 100);
 
     try {
-      const resposta = await iaApi.chat(textoEnviar);
+      let resposta: string;
+
+      // Feature 1: Se parece busca semantica, usa a API de busca
+      if (eBuscaSemantica(textoEnviar)) {
+        try {
+          const resultado = await buscaApi.semantica(textoEnviar);
+          resposta = formatarRespostaBusca(resultado);
+        } catch {
+          // Fallback para chat normal se busca falhar
+          resposta = await iaApi.chat(textoEnviar);
+        }
+      } else {
+        // Chat normal
+        resposta = await iaApi.chat(textoEnviar);
+      }
 
       const novaMensagemIA: Mensagem = {
         id: (Date.now() + 1).toString(),
@@ -84,7 +143,7 @@ export default function IAScreen() {
     } catch (error) {
       const mensagemErro: Mensagem = {
         id: (Date.now() + 1).toString(),
-        texto: 'Desculpe, não consegui processar sua pergunta. Tente novamente.',
+        texto: 'Desculpe, nao consegui processar sua pergunta. Tente novamente.',
         remetente: 'ia',
         hora: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
       };
@@ -93,6 +152,26 @@ export default function IAScreen() {
       setCarregando(false);
       setTimeout(() => flatListRef.current?.scrollToEnd(), 100);
     }
+  };
+
+  // Formata resposta da busca semantica
+  const formatarRespostaBusca = (resultado: BuscaSemanticaResponse): string => {
+    let resposta = resultado.resposta || 'Nao encontrei resultados para sua busca.';
+
+    if (resultado.mensagens && resultado.mensagens.length > 0) {
+      resposta += '\n\n📋 Mensagens encontradas:\n';
+      resultado.mensagens.slice(0, 5).forEach((msg, i) => {
+        const data = msg.data_hora ? new Date(msg.data_hora).toLocaleDateString('pt-BR') : '?';
+        const direcao = msg.direcao === 'enviada' ? '→' : '←';
+        resposta += `\n${i + 1}. [${data}] ${msg.contato_nome} ${direcao}\n"${msg.conteudo?.substring(0, 100)}${(msg.conteudo?.length || 0) > 100 ? '...' : ''}"`;
+      });
+    }
+
+    if (resultado.sugestao_followup) {
+      resposta += `\n\n💡 Sugestao: ${resultado.sugestao_followup}`;
+    }
+
+    return resposta;
   };
 
   const renderMensagem = ({ item }: { item: Mensagem }) => {
@@ -135,13 +214,30 @@ export default function IAScreen() {
         <View style={styles.avatarIA}>
           <Text style={styles.avatarTexto}>🤖</Text>
         </View>
-        <View>
+        <View style={styles.headerInfo}>
           <Text style={styles.headerNome}>Saraiva.AI</Text>
           <Text style={styles.headerStatus}>
             {carregando ? 'digitando...' : 'online'}
           </Text>
         </View>
+        {/* Botao de voz */}
+        <TouchableOpacity
+          style={styles.voiceButton}
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            setShowVoiceCommand(true);
+          }}
+        >
+          <Text style={styles.voiceButtonText}>🎤</Text>
+        </TouchableOpacity>
       </View>
+
+      {/* Voice Command Modal */}
+      <VoiceCommand
+        visible={showVoiceCommand}
+        onClose={() => setShowVoiceCommand(false)}
+        onAction={handleVoiceAction}
+      />
 
       {/* Lista de mensagens */}
       <FlatList
@@ -223,6 +319,20 @@ const styles = StyleSheet.create({
     backgroundColor: '#16213e',
     borderBottomWidth: 1,
     borderBottomColor: '#0f3460',
+  },
+  headerInfo: {
+    flex: 1,
+  },
+  voiceButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.iaAccent,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  voiceButtonText: {
+    fontSize: 20,
   },
   avatarIA: {
     width: 45,

@@ -10,6 +10,7 @@ import {
   TextInput,
   SafeAreaView,
 } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { colors, spacing, fontSize, borderRadius } from '../theme/whatsapp';
 import { perfilApi } from '../services/api';
 import { useWebSocket } from '../hooks/useWebSocket';
@@ -102,7 +103,7 @@ export default function PerfilScreen({ route, navigation }: Props) {
     };
   }, [carregarPerfil, jid]);
 
-  const { isConnected, watchConversation, unwatchConversation } = useWebSocket({
+  const { isConnected, lastError, reconnectAttempts, reconnect, watchConversation, unwatchConversation } = useWebSocket({
     onConversationUpdate: useCallback((mensagemJid: string) => {
       if (mensagemJid !== jid) return;
       carregarPerfil(true);
@@ -171,12 +172,38 @@ export default function PerfilScreen({ route, navigation }: Props) {
     <SafeAreaView style={styles.safeArea}>
       {!isOnline && (
         <View style={styles.statusBannerOffline}>
-          <Text style={styles.statusBannerText}>Sem conexão • mostrando cache</Text>
+          <Text style={styles.statusBannerText}>Sem conexao - mostrando cache</Text>
         </View>
       )}
       {isOnline && !isConnected && (
         <View style={styles.statusBannerWarning}>
-          <Text style={styles.statusBannerText}>Tempo real pausado • tentando reconectar</Text>
+          <View style={styles.statusBannerContent}>
+            <View style={styles.statusBannerTextContainer}>
+              <Text style={styles.statusBannerText}>
+                {lastError?.code === 4003
+                  ? 'Erro de autenticacao WS'
+                  : lastError?.code === 4001
+                  ? 'Device ID invalido'
+                  : reconnectAttempts > 0
+                  ? `Reconectando... (${reconnectAttempts})`
+                  : 'Tempo real pausado'}
+              </Text>
+              {lastError && (
+                <Text style={styles.statusBannerSubtext}>
+                  {lastError.reason || lastError.message}
+                </Text>
+              )}
+            </View>
+            <TouchableOpacity
+              style={styles.statusBannerButton}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                reconnect();
+              }}
+            >
+              <Text style={styles.statusBannerButtonText}>Reconectar</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       )}
       <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
@@ -492,6 +519,31 @@ const styles = StyleSheet.create({
   statusBannerText: {
     color: colors.textSecondary,
     fontSize: fontSize.xs,
-    textAlign: 'center',
+  },
+  statusBannerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  statusBannerTextContainer: {
+    flex: 1,
+  },
+  statusBannerSubtext: {
+    color: colors.textSecondary,
+    fontSize: fontSize.xs - 1,
+    marginTop: 2,
+    opacity: 0.8,
+  },
+  statusBannerButton: {
+    backgroundColor: colors.primary,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: borderRadius.sm,
+    marginLeft: spacing.sm,
+  },
+  statusBannerButtonText: {
+    color: colors.textLight,
+    fontSize: fontSize.xs,
+    fontWeight: '600',
   },
 });

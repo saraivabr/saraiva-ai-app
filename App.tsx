@@ -14,6 +14,8 @@ import ConexaoScreen from './src/screens/ConexaoScreen';
 import SuggestionsScreen from './src/screens/SuggestionsScreen';
 import PainelScreen from './src/screens/PainelScreen';
 import PerfilContatoScreen from './src/screens/PerfilContatoScreen';
+import RelationshipDashboard from './src/screens/RelationshipDashboard';
+import CoachScreen from './src/screens/CoachScreen';
 import { ComBadgeNovo } from './src/components/BadgeNovo';
 import TourGuiado from './src/components/TourGuiado';
 import { colors } from './src/theme/whatsapp';
@@ -115,6 +117,20 @@ function TabNavigator() {
         }}
       />
       <Tab.Screen
+        name="Coach"
+        component={CoachScreen}
+        options={{
+          headerShown: false,
+          tabBarLabel: 'Coach',
+          tabBarIcon: ({ color, size }) => (
+            <ComBadgeNovo featureId="aba_coach" posicao="topRight" tamanho="pequeno">
+              <Text style={{ fontSize: size, color }}>🎓</Text>
+            </ComBadgeNovo>
+          ),
+          tabBarActiveTintColor: '#9C27B0',
+        }}
+      />
+      <Tab.Screen
         name="IA"
         component={IAScreen}
         options={{
@@ -185,6 +201,13 @@ export default function App() {
               backgroundColor: colors.iaAccent,
             },
           })}
+        />
+        <Stack.Screen
+          name="RelationshipDashboard"
+          component={RelationshipDashboard}
+          options={{
+            headerShown: false,
+          }}
         />
       </Stack.Navigator>
     </NavigationContainer>
