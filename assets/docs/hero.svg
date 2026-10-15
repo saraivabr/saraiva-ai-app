@@ -22,7 +22,7 @@
 <text x="77" y="378" font-family="Arial,Helvetica,sans-serif" font-size="15" font-weight="700" fill="#0C1D16">REACT NATIVE + EXPO</text>
 <rect x="253" y="353" width="130" height="38" rx="19" fill="#FFFFFF" fill-opacity=".08" stroke="#9FCBB2" stroke-opacity=".35"/>
 <text x="273" y="378" font-family="Arial,Helvetica,sans-serif" font-size="15" fill="#D7ECE1">IA + WebSocket</text>
-<text x="58" y="451" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#829C8E">Projeto open source de interface • Ilustração conceitual</text>
+<text x="58" y="451" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#829C8E">Projeto de interface • Ilustração conceitual</text>
 <g filter="url(#shadow)">
   <rect x="720" y="48" width="387" height="407" rx="26" fill="url(#panel)" stroke="#45745D" stroke-opacity=".75"/>
   <rect x="739" y="67" width="349" height="50" rx="14" fill="#244136"/>
